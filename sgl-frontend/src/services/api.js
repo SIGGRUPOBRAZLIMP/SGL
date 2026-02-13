@@ -1,6 +1,6 @@
-﻿import axios from 'axios'
+import axios from 'axios'
 
-const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname.includes('onrender.com') ? 'https://sgl-api-xm64.onrender.com/api' : '/api')
+const API_URL = window.location.hostname.includes('onrender.com') ? 'https://sgl-api-xm64.onrender.com/api' : '/api'
 
 const api = axios.create({
   baseURL: API_URL,
@@ -16,7 +16,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response && error.response.status === 401) {
       localStorage.removeItem('sgl_token')
       localStorage.removeItem('sgl_user')
       window.location.href = '/login'
@@ -33,7 +33,7 @@ export const captarEditais = (data) => api.post('/editais/captar', data)
 export const extrairItensAI = (id) => api.post('/editais/' + id + '/extrair-itens')
 export const classificarEdital = (id, segmentos) => api.post('/editais/' + id + '/classificar', { segmentos })
 export const resumirEdital = (id) => api.post('/editais/' + id + '/resumir')
-export const getTriagem = (status = 'pendente') => api.get('/triagem', { params: { status } })
+export const getTriagem = (status) => api.get('/triagem', { params: { status: status || 'pendente' } })
 export const decidirTriagem = (editalId, data) => api.put('/triagem/' + editalId, data)
 export const getFiltros = () => api.get('/filtros')
 export const criarFiltro = (data) => api.post('/filtros', data)
@@ -47,6 +47,6 @@ export const getProcessos = (params) => api.get('/processos', { params })
 export const getProcesso = (id) => api.get('/processos/' + id)
 export const criarProcesso = (data) => api.post('/processos', data)
 export const atualizarProcesso = (id, data) => api.put('/processos/' + id, data)
-export const importarItensAI = (processoId) => api.post('/processos/' + processoId + '/importar-itens-ai')
-export const analisarViabilidade = (processoId) => api.post('/processos/' + processoId + '/analisar-viabilidade')
+export const importarItensAI = (pid) => api.post('/processos/' + pid + '/importar-itens-ai')
+export const analisarViabilidade = (pid) => api.post('/processos/' + pid + '/analisar-viabilidade')
 export default api
