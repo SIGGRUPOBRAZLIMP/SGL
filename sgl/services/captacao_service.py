@@ -155,7 +155,8 @@ class CaptacaoService:
             db.session.add(triagem)
             
             # 6. Buscar e salvar arquivos (async em produção via Celery)
-            self._processar_arquivos(edital, contratacao)
+            # Arquivos processados depois via Celery (evita timeout)
+            # self._processar_arquivos(edital, contratacao)
             
             db.session.commit()
             
