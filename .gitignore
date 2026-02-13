@@ -1,0 +1,17 @@
+﻿venv/
+__pycache__/
+*.pyc
+.env
+*.bak
+*_temp.py
+celerybeat-schedule
+celerybeat-schedule.dir
+celerybeat-schedule.bak
+celerybeat-schedule.dat
+node_modules/
+dist/
+.vite/
+apply_fixes.py
+apply_scraper_patches.py
+add_hash_scraper.py
+src_backup/

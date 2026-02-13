@@ -1,0 +1,52 @@
+# SGL - Sistema de Gestão de Licitações
+# Dependências Python
+
+# === Framework Web ===
+Flask==3.1.0
+Flask-RESTful==0.3.10
+Flask-CORS==5.0.0
+Flask-JWT-Extended==4.7.1
+Flask-Migrate==4.0.7
+flask-sqlalchemy==3.1.1
+
+# === Banco de Dados ===
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.14.1
+
+# === API Clients ===
+requests==2.32.3
+aiohttp==3.11.11
+urllib3==2.3.0
+
+# === Claude AI (Interpretação de Editais) ===
+anthropic==0.42.0
+
+# === PDF Processing ===
+pdfplumber==0.11.4
+PyMuPDF==1.25.1
+
+# === OCR (instalar separado: apt install tesseract-ocr tesseract-ocr-por) ===
+# pytesseract==0.3.13
+# pdf2image==1.17.0
+
+# === Storage ===
+cloudinary==1.41.0
+
+# === Tarefas Assíncronas ===
+celery==5.4.0
+redis==5.2.1
+
+# === Scraping (para plataformas sem API) ===
+beautifulsoup4==4.12.3
+playwright==1.49.1
+lxml==5.3.0
+
+# === Utilitários ===
+python-dotenv==1.0.1
+gunicorn==23.0.0
+
+# === Dev/Test ===
+pytest==8.3.4
+pytest-flask==1.3.0
+black==24.10.0
