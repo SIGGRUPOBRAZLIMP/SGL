@@ -39,7 +39,7 @@ def _registrar_jobs(app):
     """Registra todos os jobs agendados."""
 
     # ----------------------------------------------------------
-    # 1. Captação automática — a cada 2h no horário comercial
+    # 1. Captação PNCP automática — a cada 2h no horário comercial
     # ----------------------------------------------------------
     scheduler.add_job(
         func=_job_captacao_automatica,
@@ -51,13 +51,13 @@ def _registrar_jobs(app):
     )
 
     # ----------------------------------------------------------
-    # 2. Captação retroativa — 1x/dia às 6h (últimos 3 dias)
+    # 2. Captação PNCP diária — 1x/dia às 6h (últimos 3 dias)
     # ----------------------------------------------------------
     scheduler.add_job(
         func=_job_captacao_automatica,
         trigger=CronTrigger(hour=6, minute=0),
         id='captacao_diaria',
-        name='Captação diária completa (3 dias)',
+        name='Captação diária PNCP (3 dias)',
         kwargs={'app': app, 'periodo_dias': 3},
         replace_existing=True,
     )
@@ -69,7 +69,31 @@ def _registrar_jobs(app):
         func=_job_captacao_automatica,
         trigger=CronTrigger(day_of_week='sun', hour=4, minute=0),
         id='captacao_semanal',
-        name='Captação retroativa semanal (7 dias)',
+        name='Captação retroativa semanal PNCP (7 dias)',
+        kwargs={'app': app, 'periodo_dias': 7},
+        replace_existing=True,
+    )
+
+    # ----------------------------------------------------------
+    # 4. Captação BBMNET — 2x/dia às 7h e 13h (últimos 3 dias)
+    # ----------------------------------------------------------
+    scheduler.add_job(
+        func=_job_captacao_bbmnet,
+        trigger=CronTrigger(hour='7,13', minute=30),
+        id='captacao_bbmnet',
+        name='Captação BBMNET (2x/dia)',
+        kwargs={'app': app, 'periodo_dias': 3},
+        replace_existing=True,
+    )
+
+    # ----------------------------------------------------------
+    # 5. Captação BBMNET retroativa — domingo 5h (últimos 7 dias)
+    # ----------------------------------------------------------
+    scheduler.add_job(
+        func=_job_captacao_bbmnet,
+        trigger=CronTrigger(day_of_week='sun', hour=5, minute=0),
+        id='captacao_bbmnet_semanal',
+        name='Captação retroativa semanal BBMNET (7 dias)',
         kwargs={'app': app, 'periodo_dias': 7},
         replace_existing=True,
     )
@@ -83,14 +107,14 @@ def _registrar_jobs(app):
 
 def _job_captacao_automatica(app, periodo_dias=3):
     """
-    Executa captação automática dentro do contexto Flask.
+    Executa captação automática PNCP dentro do contexto Flask.
     """
     with app.app_context():
         try:
             from .services.captacao_service import CaptacaoService
             from .models.database import FiltroProspeccao, db, LogAtividade
 
-            logger.info(f"=== CAPTAÇÃO AUTOMÁTICA | período: {periodo_dias} dias ===")
+            logger.info(f"=== CAPTAÇÃO PNCP AUTOMÁTICA | período: {periodo_dias} dias ===")
 
             service = CaptacaoService(app.config)
 
@@ -135,9 +159,60 @@ def _job_captacao_automatica(app, periodo_dias=3):
             except Exception as e:
                 logger.warning(f"Erro ao registrar log: {e}")
 
-            logger.info(f"=== CAPTAÇÃO AUTOMÁTICA CONCLUÍDA: {stats} ===")
+            logger.info(f"=== CAPTAÇÃO PNCP CONCLUÍDA: {stats} ===")
             return stats
 
         except Exception as e:
-            logger.error(f"Erro na captação automática: {e}", exc_info=True)
+            logger.error(f"Erro na captação PNCP automática: {e}", exc_info=True)
+            return {'erro': str(e)}
+
+
+def _job_captacao_bbmnet(app, periodo_dias=3):
+    """
+    Executa captação automática BBMNET dentro do contexto Flask.
+    """
+    with app.app_context():
+        try:
+            from .services.bbmnet_integration import executar_captacao_bbmnet
+            from .models.database import db, LogAtividade, FiltroProspeccao
+
+            logger.info(f"=== CAPTAÇÃO BBMNET AUTOMÁTICA | período: {periodo_dias} dias ===")
+
+            # Pegar UFs dos filtros ativos
+            ufs = None
+            filtros_ativos = FiltroProspeccao.query.filter_by(ativo=True).all()
+            if filtros_ativos:
+                todas_ufs = set()
+                for filtro in filtros_ativos:
+                    if filtro.regioes_uf:
+                        todas_ufs.update(filtro.regioes_uf)
+                ufs = list(todas_ufs) if todas_ufs else None
+
+            stats = executar_captacao_bbmnet(
+                app_config=app.config,
+                periodo_dias=periodo_dias,
+                ufs=ufs,
+            )
+
+            # Registrar log
+            try:
+                log = LogAtividade(
+                    acao='captacao_bbmnet',
+                    entidade='edital',
+                    detalhes={
+                        'stats': stats,
+                        'periodo_dias': periodo_dias,
+                        'ufs': ufs,
+                    },
+                )
+                db.session.add(log)
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Erro ao registrar log BBMNET: {e}")
+
+            logger.info(f"=== CAPTAÇÃO BBMNET CONCLUÍDA: {stats} ===")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Erro na captação BBMNET automática: {e}", exc_info=True)
             return {'erro': str(e)}

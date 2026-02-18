@@ -154,6 +154,25 @@ def executar_captacao():
     
     return jsonify(resultado)
 
+# CAPTACAO BBMNET (manual)
+@api_bp.route('/editais/captar-bbmnet', methods=['POST'])
+@jwt_required()
+def executar_captacao_bbmnet():
+    data = request.get_json() or {}
+    periodo_dias = data.get('periodo_dias', 7)
+    ufs = data.get('ufs', ['RJ', 'SP', 'MG', 'ES'])
+    try:
+        from ..services.bbmnet_integration import executar_captacao_bbmnet as captar_bbmnet
+        resultado = captar_bbmnet(
+            app_config=current_app.config,
+            periodo_dias=periodo_dias,
+            ufs=ufs,
+        )
+        return jsonify({'sucesso': True, 'plataforma': 'bbmnet', 'stats': resultado}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
 
 @api_bp.route('/scheduler/status', methods=['GET'])
 @jwt_required()
