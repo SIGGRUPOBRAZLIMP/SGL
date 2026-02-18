@@ -304,7 +304,7 @@ class CaptacaoService:
             orgao_razao_social=orgao.get('razaoSocial'),
             unidade_codigo=unidade.get('codigoUnidade'),
             unidade_nome=unidade.get('nomeUnidade'),
-            uf=contratacao.get('uf'),
+            uf=contratacao.get('unidadeOrgao', {}).get('ufSigla') or contratacao.get('uf'),
             municipio=contratacao.get('municipioNome'),
             
             objeto_resumo=contratacao.get('objetoCompra', '')[:500],
@@ -335,7 +335,7 @@ class CaptacaoService:
             return True
         
         objeto = (contratacao.get('objetoCompra') or '').lower()
-        uf = contratacao.get('uf', '')
+        uf = contratacao.get('unidadeOrgao', {}).get('ufSigla') or contratacao.get('uf', '')
         valor = contratacao.get('valorTotalEstimado')
         
         for filtro in filtros:
