@@ -28,7 +28,7 @@ def executar_captacao_licitardigital(app_config: dict, periodo_dias: int = 7) ->
     password = os.environ.get('LICITAR_PASSWORD') or app_config.get('LICITAR_PASSWORD', '')
     token_manual = os.environ.get('LICITAR_TOKEN') or app_config.get('LICITAR_TOKEN', '')
 
-    if not username or not password:
+    if (not username or not password) and not token_manual:
         logger.warning("Licitar Digital: credenciais não configuradas (LICITAR_USERNAME/LICITAR_PASSWORD)")
         stats['erros'] = 1
         stats['erro_msg'] = 'Credenciais Licitar Digital não configuradas'

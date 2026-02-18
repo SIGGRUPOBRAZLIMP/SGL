@@ -455,9 +455,12 @@ def captar_editais_licitardigital(
         scraper = LicitarDigitalScraper(username, password)
 
         # Tentar login automático
-        autenticado = scraper.autenticar()
-
-        if not autenticado and token_manual:
+        autenticado = False
+        if token_manual:
+            scraper._set_token_manual(token_manual)
+            autenticado = True
+        if not autenticado:
+            autenticado = scraper.autenticar()
             logger.info("Login automático falhou, usando token manual")
             scraper._set_token_manual(token_manual)
             autenticado = True
