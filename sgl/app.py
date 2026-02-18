@@ -1,6 +1,6 @@
 """
 SGL - Sistema de Gestão de Licitações
-Aplicação principal Flask + Celery
+Aplicação principal Flask + APScheduler
 """
 import os
 from flask import Flask
@@ -26,8 +26,11 @@ def create_app(config_name=None):
     JWTManager(app)
     Migrate(app, db)
 
-    # Integrar Celery com Flask
+    # Celery (mantém compatibilidade, mas não é mais obrigatório)
     _init_celery(app)
+
+    # APScheduler — captação automática sem Redis
+    _init_scheduler(app)
 
     # Registrar blueprints (rotas da API)
     from .api.routes import api_bp
@@ -46,8 +49,17 @@ def create_app(config_name=None):
     return app
 
 
+def _init_scheduler(app):
+    """Inicializa APScheduler para captação automática."""
+    try:
+        from .scheduler import init_scheduler
+        init_scheduler(app)
+    except Exception as e:
+        app.logger.warning(f"APScheduler não inicializado: {e}")
+
+
 def _init_celery(app):
-    """Conecta o Celery ao contexto do Flask."""
+    """Conecta o Celery ao contexto do Flask (mantém compatibilidade)."""
     try:
         from .celery_app import celery
 

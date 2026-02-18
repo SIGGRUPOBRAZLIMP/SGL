@@ -6,7 +6,7 @@ import hashlib
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from ..models.database import (
@@ -52,6 +52,7 @@ class CaptacaoService:
         self,
         data_inicial: Optional[str] = None,
         data_final: Optional[str] = None,
+        periodo_dias: Optional[int] = None,
         ufs: Optional[list[str]] = None,
         modalidades: Optional[list[int]] = None,
         filtros_ids: Optional[list[int]] = None
@@ -59,17 +60,16 @@ class CaptacaoService:
         """
         Executa ciclo completo de captação.
         
-        Fluxo:
-        1. Buscar contratações no PNCP
-        2. Filtrar por critérios configurados
-        3. Verificar duplicidades
-        4. Salvar editais novos
-        5. Baixar documentos
-        6. Extrair itens via AI (se configurado)
-        7. Criar triagem pendente
+        Args:
+            data_inicial: Data início YYYYMMDD (opcional)
+            data_final: Data fim YYYYMMDD (opcional)
+            periodo_dias: Buscar últimos N dias (alternativa a data_inicial/data_final)
+            ufs: Lista de UFs para filtrar
+            modalidades: Lista de IDs de modalidades
+            filtros_ids: IDs de filtros de prospecção a aplicar
         
         Returns:
-            dict com estatísticas da captação
+            dict com estatísticas detalhadas da captação
         """
         stats = {
             'total_encontrados': 0,
@@ -78,14 +78,31 @@ class CaptacaoService:
             'filtrados': 0,
             'erros': 0,
             'itens_extraidos': 0,
+            'detalhes_uf': {},
+            'periodo': {},
+            'motivos_filtrados': [],
         }
         
-        # Defaults
+        # --- Resolver período de busca ---
         hoje = datetime.now()
-        if not data_inicial:
-            data_inicial = formatar_data_pncp(hoje)
-        if not data_final:
+        
+        if periodo_dias and not data_inicial:
+            # Período em dias: busca de (hoje - N dias) até hoje
+            inicio = hoje - timedelta(days=periodo_dias)
+            data_inicial = formatar_data_pncp(inicio)
             data_final = formatar_data_pncp(hoje)
+        else:
+            if not data_inicial:
+                data_inicial = formatar_data_pncp(hoje)
+            if not data_final:
+                data_final = formatar_data_pncp(hoje)
+        
+        stats['periodo'] = {
+            'data_inicial': data_inicial,
+            'data_final': data_final,
+            'periodo_dias': periodo_dias,
+        }
+        
         if not modalidades:
             modalidades = [8]  # Pregão Eletrônico por padrão
         
@@ -95,7 +112,15 @@ class CaptacaoService:
         # Para cada combinação UF + modalidade
         ufs_busca = ufs or [None]  # None = todas as UFs
         
+        logger.info(
+            f"Captação iniciada | Período: {data_inicial} → {data_final} "
+            f"| UFs: {ufs or 'TODAS'} | Modalidades: {modalidades} "
+            f"| Filtros ativos: {len(filtros)}"
+        )
+        
         for uf in ufs_busca:
+            uf_stats = {'encontrados': 0, 'novos': 0, 'duplicados': 0, 'filtrados': 0, 'erros': 0}
+            
             for modalidade in modalidades:
                 try:
                     contratacoes = self.pncp.buscar_todas_contratacoes(
@@ -106,20 +131,40 @@ class CaptacaoService:
                         max_paginas=10
                     )
                     
+                    uf_stats['encontrados'] += len(contratacoes)
                     stats['total_encontrados'] += len(contratacoes)
                     
                     for contratacao in contratacoes:
-                        resultado = self._processar_contratacao(contratacao, filtros)
+                        resultado = self._processar_contratacao(contratacao, filtros, stats)
+                        uf_stats[resultado] += 1
                         stats[resultado] += 1
                         
                 except Exception as e:
                     logger.error(f"Erro na captação UF={uf} MOD={modalidade}: {e}")
                     stats['erros'] += 1
+                    uf_stats['erros'] += 1
+            
+            uf_label = uf or 'TODAS'
+            stats['detalhes_uf'][uf_label] = uf_stats
+            
+            logger.info(
+                f"  UF={uf_label}: {uf_stats['encontrados']} encontrados, "
+                f"{uf_stats['novos']} novos, {uf_stats['duplicados']} duplicados, "
+                f"{uf_stats['filtrados']} filtrados, {uf_stats['erros']} erros"
+            )
         
-        logger.info(f"Captação finalizada: {stats}")
+        logger.info(
+            f"Captação finalizada | "
+            f"Total: {stats['total_encontrados']} encontrados, "
+            f"{stats['novos_salvos']} novos salvos, "
+            f"{stats['duplicados']} duplicados, "
+            f"{stats['filtrados']} filtrados, "
+            f"{stats['erros']} erros"
+        )
+        
         return stats
     
-    def _processar_contratacao(self, contratacao: dict, filtros: list) -> str:
+    def _processar_contratacao(self, contratacao: dict, filtros: list, stats: dict) -> str:
         """
         Processa uma contratação individual do PNCP.
         
@@ -138,8 +183,17 @@ class CaptacaoService:
                 return 'duplicados'
             
             # 3. Aplicar filtros
-            if filtros and not self._contratacao_passa_filtros(contratacao, filtros):
-                return 'filtrados'
+            if filtros:
+                passa, motivo = self._contratacao_passa_filtros(contratacao, filtros)
+                if not passa:
+                    # Logging detalhado do motivo da exclusão
+                    orgao = contratacao.get('unidadeOrgao', {}).get('nomeUnidade', 'N/A')
+                    objeto = (contratacao.get('objetoCompra') or '')[:60]
+                    logger.debug(
+                        f"  Filtrado: [{motivo}] {orgao} - {objeto}"
+                    )
+                    stats['motivos_filtrados'].append(motivo)
+                    return 'filtrados'
             
             # 4. Criar edital no banco
             edital = self._criar_edital(contratacao)
@@ -154,13 +208,13 @@ class CaptacaoService:
             )
             db.session.add(triagem)
             
-            # 6. Buscar e salvar arquivos (async em produção via Celery)
-            # Arquivos processados depois via Celery (evita timeout)
-            # self._processar_arquivos(edital, contratacao)
-            
             db.session.commit()
             
-            logger.info(f"Novo edital salvo: {numero_pncp} | {edital.objeto_resumo[:80]}")
+            logger.info(
+                f"  ✓ Novo edital: {numero_pncp} | "
+                f"{contratacao.get('unidadeOrgao', {}).get('ufSigla', '??')}/{contratacao.get('municipioNome', '??')} | "
+                f"{edital.objeto_resumo[:80]}"
+            )
             return 'novos_salvos'
             
         except Exception as e:
@@ -175,7 +229,7 @@ class CaptacaoService:
     def extrair_itens_edital(self, edital_id: int) -> dict:
         """
         Extrai itens de um edital usando Claude AI.
-        Pode ser chamado manualmente ou via Celery task.
+        Pode ser chamado manualmente ou via scheduler.
         
         Returns:
             dict com resultado da extração
@@ -205,43 +259,38 @@ class CaptacaoService:
                 # Fallback: usar texto do objeto
                 texto_obj = edital.objeto_completo or edital.objeto_resumo or ''
                 if not texto_obj:
-                    return {'erro': 'Nenhum texto disponível para análise'}
-                class FakeArquivo:
-                    texto_extraido = texto_obj
-                arquivo_edital = FakeArquivo()
+                    return {'erro': 'Sem texto disponível para extração'}
+                resultado = self.interpreter.extrair_itens(texto_obj)
+                itens_salvos = 0
+                for item in resultado.get('itens', []):
+                    item_db = ItemEditalExtraido(
+                        edital_id=edital.id,
+                        descricao=item.get('descricao'),
+                        quantidade=item.get('quantidade'),
+                        unidade=item.get('unidade'),
+                        valor_estimado=item.get('valor_estimado'),
+                        codigo_catmat=item.get('codigo_catmat'),
+                    )
+                    db.session.add(item_db)
+                    itens_salvos += 1
+                db.session.commit()
+                resultado['itens_salvos'] = itens_salvos
+                return resultado
+
+        texto = arquivo_edital.texto_extraido
+        resultado = self.interpreter.extrair_itens(texto)
         
-        # Preparar contexto
-        contexto = (
-            f"Pregão {edital.numero_pregao or ''} | "
-            f"Processo {edital.numero_processo or ''} | "
-            f"Órgão: {edital.orgao_razao_social or ''} | "
-            f"UF: {edital.uf or ''}"
-        )
-        
-        # Chamar Claude AI para extração
-        resultado = self.interpreter.extrair_itens(
-            texto_edital=arquivo_edital.texto_extraido,
-            contexto=contexto
-        )
-        
-        # Salvar itens extraídos no banco
         itens_salvos = 0
-        for item_data in resultado.get('itens', []):
-            item = ItemEditalExtraido(
-                edital_id=edital_id,
-                numero_item=item_data.get('numero_item'),
-                descricao=item_data.get('descricao', ''),
-                codigo_referencia=item_data.get('codigo_referencia'),
-                quantidade=item_data.get('quantidade'),
-                unidade_compra=item_data.get('unidade_compra', 'UN'),
-                preco_unitario_maximo=item_data.get('preco_unitario_maximo'),
-                preco_total_maximo=item_data.get('preco_total_maximo'),
-                grupo_lote=item_data.get('grupo_lote'),
-                confianca_extracao=item_data.get('confianca', 0.5),
-                metodo_extracao='claude_api',
-                revisado=False
+        for item in resultado.get('itens', []):
+            item_db = ItemEditalExtraido(
+                edital_id=edital.id,
+                descricao=item.get('descricao'),
+                quantidade=item.get('quantidade'),
+                unidade=item.get('unidade'),
+                valor_estimado=item.get('valor_estimado'),
+                codigo_catmat=item.get('codigo_catmat'),
             )
-            db.session.add(item)
+            db.session.add(item_db)
             itens_salvos += 1
         
         db.session.commit()
@@ -329,44 +378,60 @@ class CaptacaoService:
             status='captado',
         )
     
-    def _contratacao_passa_filtros(self, contratacao: dict, filtros: list) -> bool:
-        """Verifica se uma contratação passa em pelo menos um filtro."""
+    def _contratacao_passa_filtros(self, contratacao: dict, filtros: list) -> tuple:
+        """
+        Verifica se uma contratação passa em pelo menos um filtro.
+        
+        Returns:
+            tuple (bool, str): (passou, motivo_exclusao)
+        """
         if not filtros:
-            return True
+            return True, ''
         
         objeto = (contratacao.get('objetoCompra') or '').lower()
         uf = contratacao.get('unidadeOrgao', {}).get('ufSigla') or contratacao.get('uf', '')
         valor = contratacao.get('valorTotalEstimado')
         
+        ultimo_motivo = 'nenhum_filtro_aplicavel'
+        
         for filtro in filtros:
             passa = True
+            motivo = ''
             
             # Palavras-chave (pelo menos uma deve estar no objeto)
             if filtro.palavras_chave:
                 if not any(kw.lower() in objeto for kw in filtro.palavras_chave):
                     passa = False
+                    motivo = f'palavras_chave ({filtro.nome})'
             
             # Palavras de exclusão
             if passa and filtro.palavras_exclusao:
                 if any(exc.lower() in objeto for exc in filtro.palavras_exclusao):
+                    palavra_encontrada = next(exc for exc in filtro.palavras_exclusao if exc.lower() in objeto)
                     passa = False
+                    motivo = f'palavra_exclusao: "{palavra_encontrada}" ({filtro.nome})'
             
             # Região
             if passa and filtro.regioes_uf:
                 if uf and uf.upper() not in [u.upper() for u in filtro.regioes_uf]:
                     passa = False
+                    motivo = f'uf: {uf} não em {filtro.regioes_uf} ({filtro.nome})'
             
             # Faixa de valor
             if passa and valor is not None:
                 if filtro.valor_minimo and valor < float(filtro.valor_minimo):
                     passa = False
+                    motivo = f'valor: {valor} < mín {filtro.valor_minimo} ({filtro.nome})'
                 if filtro.valor_maximo and valor > float(filtro.valor_maximo):
                     passa = False
+                    motivo = f'valor: {valor} > máx {filtro.valor_maximo} ({filtro.nome})'
             
             if passa:
-                return True
+                return True, ''
+            
+            ultimo_motivo = motivo
         
-        return False
+        return False, ultimo_motivo
     
     def _calcular_prioridade(self, contratacao: dict) -> str:
         """Calcula prioridade com base no valor e prazo."""

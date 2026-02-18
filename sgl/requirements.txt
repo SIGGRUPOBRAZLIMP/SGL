@@ -36,6 +36,7 @@ cloudinary==1.41.0
 # === Tarefas Assíncronas ===
 celery==5.4.0
 redis==5.2.1
+APScheduler==3.10.4
 
 # === Scraping (para plataformas sem API) ===
 beautifulsoup4==4.12.3

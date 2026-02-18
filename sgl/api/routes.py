@@ -138,12 +138,13 @@ def obter_edital(edital_id):
 def executar_captacao():
     """
     Executa captação manual de editais via PNCP.
-    Corpo: { data_inicial, data_final, ufs, modalidades }
+    Corpo: { periodo_dias, data_inicial, data_final, ufs, modalidades }
     """
     data = request.get_json() or {}
     
     service = CaptacaoService(current_app.config)
     resultado = service.executar_captacao(
+        periodo_dias=data.get('periodo_dias'),
         data_inicial=data.get('data_inicial'),
         data_final=data.get('data_final'),
         ufs=data.get('ufs'),
@@ -152,6 +153,27 @@ def executar_captacao():
     )
     
     return jsonify(resultado)
+
+
+@api_bp.route('/scheduler/status', methods=['GET'])
+@jwt_required()
+def scheduler_status():
+    """Retorna status do agendador de captação automática."""
+    try:
+        from ..scheduler import scheduler
+        jobs = []
+        for job in scheduler.get_jobs():
+            jobs.append({
+                'id': job.id,
+                'nome': job.name,
+                'proximo_disparo': str(job.next_run_time) if job.next_run_time else None,
+            })
+        return jsonify({
+            'ativo': scheduler.running,
+            'jobs': jobs,
+        })
+    except Exception as e:
+        return jsonify({'ativo': False, 'erro': str(e)})
 
 
 # ============================================================
