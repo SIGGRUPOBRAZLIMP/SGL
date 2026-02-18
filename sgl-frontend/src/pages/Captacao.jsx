@@ -194,7 +194,7 @@ export default function Captacao() {
                   <div key={uf} className="bg-white bg-opacity-60 rounded px-3 py-2 text-sm">
                     <span className="font-semibold text-gray-700">{uf}:</span>{' '}
                     <span className="text-gray-600">
-                      {stats.encontrados} encontrados, {stats.novos} novos, {stats.duplicados} duplicados
+                      {stats.encontrados} encontrados, {stats.novos_salvos} novos, {stats.duplicados} duplicados
                     </span>
                   </div>
                 ))}

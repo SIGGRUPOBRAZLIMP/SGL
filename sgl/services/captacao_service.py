@@ -119,7 +119,7 @@ class CaptacaoService:
         )
         
         for uf in ufs_busca:
-            uf_stats = {'encontrados': 0, 'novos': 0, 'duplicados': 0, 'filtrados': 0, 'erros': 0}
+            uf_stats = {'encontrados': 0, 'novos_salvos': 0, 'duplicados': 0, 'filtrados': 0, 'erros': 0}
             
             for modalidade in modalidades:
                 try:
@@ -149,7 +149,7 @@ class CaptacaoService:
             
             logger.info(
                 f"  UF={uf_label}: {uf_stats['encontrados']} encontrados, "
-                f"{uf_stats['novos']} novos, {uf_stats['duplicados']} duplicados, "
+                f"{uf_stats['novos_salvos']} novos, {uf_stats['duplicados']} duplicados, "
                 f"{uf_stats['filtrados']} filtrados, {uf_stats['erros']} erros"
             )
         
