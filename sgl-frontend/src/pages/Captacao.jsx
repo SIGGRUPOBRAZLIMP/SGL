@@ -65,7 +65,7 @@ export default function Captacao() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Captação de Editais</h1>
-        <p className="text-gray-500">Buscar novos editais no PNCP (Portal Nacional de Contratações Públicas)</p>
+        <p className="text-gray-500">Buscar novos editais no PNCP e BBMNET (multi-plataformações Públicas)</p>
       </div>
 
       {/* Período */}
@@ -152,7 +152,7 @@ export default function Captacao() {
           {loading ? (
             <>
               <RefreshCw size={22} className="animate-spin" />
-              Captando editais do PNCP ({periodoDias} dias)...
+              Captando editais PNCP + BBMNET ({periodoDias} dias)...
             </>
           ) : (
             <>
@@ -179,11 +179,26 @@ export default function Captacao() {
             <h3 className="text-lg font-semibold text-success-700">Captação Concluída!</h3>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <ResultStat label="Encontrados no PNCP" value={result.total_encontrados} />
+            <ResultStat label="PNCP encontrados" value={result.total_encontrados} />
             <ResultStat label="Novos salvos" value={result.novos_salvos} highlight />
             <ResultStat label="Já existiam (duplicados)" value={result.duplicados} />
             <ResultStat label="Filtrados" value={result.filtrados} />
           </div>
+
+          {/* Resultados BBMNET */}
+          {result.bbmnet && (
+            <div className="mt-4 p-3 bg-white bg-opacity-60 rounded-lg">
+              <h4 className="text-sm font-semibold text-blue-700 mb-2">BBMNET</h4>
+              <div className="grid grid-cols-3 gap-4">
+                <ResultStat label="Encontrados" value={result.bbmnet.total_encontrados || 0} />
+                <ResultStat label="Novos salvos" value={result.bbmnet.novos_salvos || 0} highlight />
+                <ResultStat label="Duplicados" value={result.bbmnet.duplicados || 0} />
+              </div>
+              {result.bbmnet.erro && (
+                <p className="text-xs text-red-500 mt-1">{result.bbmnet.erro}</p>
+              )}
+            </div>
+          )}
 
           {/* Detalhes por UF */}
           {result.detalhes_uf && Object.keys(result.detalhes_uf).length > 0 && (
