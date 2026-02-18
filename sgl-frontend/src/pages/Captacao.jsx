@@ -65,7 +65,7 @@ export default function Captacao() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Captação de Editais</h1>
-        <p className="text-gray-500">Buscar novos editais no PNCP e BBMNET (multi-plataformações Públicas)</p>
+        <p className="text-gray-500">Buscar novos editais no PNCP, BBMNET e Licitar Digital (multi-plataformações Públicas)</p>
       </div>
 
       {/* Período */}
@@ -152,7 +152,7 @@ export default function Captacao() {
           {loading ? (
             <>
               <RefreshCw size={22} className="animate-spin" />
-              Captando editais PNCP + BBMNET ({periodoDias} dias)...
+              Captando editais PNCP + BBMNET + Licitar ({periodoDias} dias)...
             </>
           ) : (
             <>
@@ -196,6 +196,21 @@ export default function Captacao() {
               </div>
               {result.bbmnet.erro && (
                 <p className="text-xs text-red-500 mt-1">{result.bbmnet.erro}</p>
+              )}
+            </div>
+          )}
+
+          {/* Resultados Licitar Digital */}
+          {result.licitardigital && (
+            <div className="mt-4 p-3 bg-white bg-opacity-60 rounded-lg">
+              <h4 className="text-sm font-semibold text-purple-700 mb-2">Licitar Digital</h4>
+              <div className="grid grid-cols-3 gap-4">
+                <ResultStat label="Encontrados" value={result.licitardigital.total_encontrados || 0} />
+                <ResultStat label="Novos salvos" value={result.licitardigital.novos_salvos || 0} highlight />
+                <ResultStat label="Duplicados" value={result.licitardigital.duplicados || 0} />
+              </div>
+              {result.licitardigital.erro_msg && (
+                <p className="text-xs text-red-500 mt-1">{result.licitardigital.erro_msg}</p>
               )}
             </div>
           )}

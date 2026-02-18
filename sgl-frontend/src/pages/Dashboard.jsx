@@ -134,7 +134,7 @@ export default function Dashboard() {
             <div className="card text-center py-12">
               <AlertCircle size={48} className="mx-auto text-gray-300 mb-4" />
               <h3 className="text-lg font-medium text-gray-600 mb-2">Nenhum edital captado ainda</h3>
-              <p className="text-gray-400 mb-4">Clique em "Captar Pregões" para buscar editais do PNCP e BBMNET</p>
+              <p className="text-gray-400 mb-4">Clique em "Captar Pregões" para buscar editais do PNCP, BBMNET e Licitar Digital</p>
             </div>
           )}
         </>

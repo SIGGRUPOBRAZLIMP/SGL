@@ -98,6 +98,30 @@ def _registrar_jobs(app):
         replace_existing=True,
     )
 
+    # ----------------------------------------------------------
+    # 6. Captacao LICITAR DIGITAL — 2x/dia as 8h e 14h
+    # ----------------------------------------------------------
+    scheduler.add_job(
+        func=_job_captacao_licitardigital,
+        trigger=CronTrigger(hour='8,14', minute=0),
+        id='captacao_licitardigital',
+        name='Captacao Licitar Digital (2x/dia)',
+        kwargs={'app': app, 'periodo_dias': 3},
+        replace_existing=True,
+    )
+
+    # ----------------------------------------------------------
+    # 7. Captacao LICITAR DIGITAL retroativa — domingo 5h30
+    # ----------------------------------------------------------
+    scheduler.add_job(
+        func=_job_captacao_licitardigital,
+        trigger=CronTrigger(day_of_week='sun', hour=5, minute=30),
+        id='captacao_licitardigital_semanal',
+        name='Captacao retroativa semanal Licitar Digital (7 dias)',
+        kwargs={'app': app, 'periodo_dias': 7},
+        replace_existing=True,
+    )
+
     logger.info(f"Jobs registrados: {[j.id for j in scheduler.get_jobs()]}")
 
 

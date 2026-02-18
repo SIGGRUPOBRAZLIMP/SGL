@@ -143,7 +143,7 @@ def executar_captacao():
     data = request.get_json() or {}
     
     service = CaptacaoService(current_app.config)
-    resultado = service.executar_captacao(
+    resultado_pncp = service.executar_captacao(
         periodo_dias=data.get('periodo_dias'),
         data_inicial=data.get('data_inicial'),
         data_final=data.get('data_final'),
@@ -151,8 +151,24 @@ def executar_captacao():
         modalidades=data.get('modalidades'),
         filtros_ids=data.get('filtros_ids')
     )
-    
-    return jsonify(resultado)
+    periodo = data.get('periodo_dias') or 3
+    ufs_busca = data.get('ufs') or ['RJ', 'SP', 'MG', 'ES']
+    resultado_bbmnet = {}
+    try:
+        from ..services.bbmnet_integration import executar_captacao_bbmnet as captar_bbmnet
+        resultado_bbmnet = captar_bbmnet(app_config=current_app.config, periodo_dias=periodo, ufs=ufs_busca)
+    except Exception as e:
+        resultado_bbmnet = {'erro': str(e)}
+    resultado_licitar = {}
+    try:
+        from ..services.licitardigital_integration import executar_captacao_licitardigital as captar_licitar
+        resultado_licitar = captar_licitar(app_config=current_app.config, periodo_dias=periodo)
+    except Exception as e:
+        resultado_licitar = {'erro': str(e)}
+    resultado_pncp['bbmnet'] = resultado_bbmnet
+    resultado_pncp['licitardigital'] = resultado_licitar
+    resultado_pncp['total_geral'] = resultado_pncp.get('novos_salvos', 0) + resultado_bbmnet.get('novos_salvos', 0) + resultado_licitar.get('novos_salvos', 0)
+    return jsonify(resultado_pncp)
 
 # CAPTACAO BBMNET (manual)
 @api_bp.route('/editais/captar-bbmnet', methods=['POST'])
