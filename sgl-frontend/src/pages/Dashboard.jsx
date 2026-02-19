@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { getDashboardStats, captarEditais } from '../services/api'
-import { FileText, Filter, CheckCircle, XCircle, TrendingUp, RefreshCw, AlertCircle } from 'lucide-react'
+import { getDashboardStats } from '../services/api'
+import { FileText, Filter, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
 
 function StatCard({ icon: Icon, label, value, color, sub }) {
   const colors = {
@@ -28,8 +28,7 @@ export default function Dashboard() {
   const { user } = useAuth()
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [captando, setCaptando] = useState(false)
-  const [captResult, setCaptResult] = useState(null)
+
 
   useEffect(() => {
     loadStats()
@@ -46,19 +45,7 @@ export default function Dashboard() {
     }
   }
 
-  const handleCaptarRapido = async () => {
-    setCaptando(true)
-    setCaptResult(null)
-    try {
-      const r = await captarEditais({ modalidades: [8], ufs: ['RJ', 'SP', 'MG', 'ES'] })
-      setCaptResult(r.data)
-      loadStats()
-    } catch (err) {
-      setCaptResult({ erro: err.response?.data?.error || 'Erro na captação' })
-    } finally {
-      setCaptando(false)
-    }
-  }
+
 
   return (
     <div>
@@ -67,21 +54,9 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-gray-900">Olá, {user?.nome}!</h1>
           <p className="text-gray-500">Bem-vindo ao painel do SGL</p>
         </div>
-        <button onClick={handleCaptarRapido} disabled={captando} className="btn-primary flex items-center gap-2 disabled:opacity-50">
-          <RefreshCw size={18} className={captando ? 'animate-spin' : ''} />
-          {captando ? 'Captando...' : 'Captar Pregões'}
-        </button>
       </div>
 
-      {captResult && (
-        <div className={`mb-6 p-4 rounded-lg ${captResult.erro ? 'bg-danger-50 text-danger-700' : 'bg-success-50 text-success-700'}`}>
-          {captResult.erro ? (
-            <span>{captResult.erro}</span>
-          ) : (
-            <span>✅ Captação concluída: {captResult.novos_salvos} novos editais, {captResult.duplicados} já existiam, {captResult.total_encontrados} encontrados no PNCP</span>
-          )}
-        </div>
-      )}
+
 
       {loading ? (
         <div className="flex items-center justify-center py-20">

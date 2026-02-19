@@ -58,13 +58,7 @@ export default function Captacao() {
   }
 
   const handleCaptarLicitar = async () => {
-    setLicitar({ loading: true, result: null, error: '' })
-    try {
-      const r = await captarLicitar({ periodo_dias: periodoDias })
-      setLicitar({ loading: false, result: r.data, error: '' })
-    } catch (err) {
-      setLicitar({ loading: false, result: null, error: err.response?.data?.erro || 'Erro ao captar Licitar Digital' })
-    }
+    setLicitar({ loading: false, result: null, error: 'Captação via script local (C:\\SGL-Licitar\\captar_licitar.bat). Cloudflare bloqueia IPs cloud.' })
   }
 
   const handleCaptarTodas = () => {
