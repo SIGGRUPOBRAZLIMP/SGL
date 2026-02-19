@@ -127,7 +127,11 @@ def listar_editais():
     
     # Filtros avançados
     if modalidade:
-        query = query.filter(Edital.modalidade_nome.ilike(f'%{modalidade}%'))
+        # Buscar por palavras-chave (ex: "Pregão Eletrônico" match "Pregão - Eletrônico" e "Pregão (Setor público)")
+        palavras = [p.strip() for p in modalidade.replace('(', ' ').replace(')', ' ').replace('-', ' ').split() if len(p.strip()) > 2]
+        if palavras:
+            filtros_mod = [Edital.modalidade_nome.ilike(f'%{p}%') for p in palavras]
+            query = query.filter(db.and_(*filtros_mod))
     if municipio:
         query = query.filter(Edital.municipio.ilike(f'%{municipio}%'))
     if srp:

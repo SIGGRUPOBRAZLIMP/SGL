@@ -394,6 +394,20 @@ class BBMNETScraper:
         endereco = orgao.get("endereco", {}) if isinstance(orgao, dict) else {}
         uf = endereco.get("estado", "") if isinstance(endereco, dict) else ""
         municipio = endereco.get("cidade", "") if isinstance(endereco, dict) else ""
+        
+        # Extrair município do nome do órgão se não veio no endereço
+        if not municipio:
+            nome_orgao = orgao.get("razaoSocial") or orgao.get("nomeFantasia") or orgao.get("nome") or ""
+            # Padrões: "Prefeitura Municipal De Piraí", "Câmara Municipal de Barra Mansa"
+            import re
+            match = re.search(r'(?:Municipal|Município|Municipio)\s+(?:De|de|DO|do|DA|da)\s+(.+?)(?:\s*[-/]|$)', nome_orgao)
+            if match:
+                municipio = match.group(1).strip()
+            elif " de " in nome_orgao.lower():
+                # "Fundo Municipal de Saúde de Pinheiral" -> "Pinheiral"
+                parts = nome_orgao.split(" de ")
+                if len(parts) >= 3:
+                    municipio = parts[-1].strip().rstrip("/")
 
         # Se não tem UF no endereço, tentar pegar do edital ou do contexto de busca
         if not uf and isinstance(orgao.get("uf"), str):
