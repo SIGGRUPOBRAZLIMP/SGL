@@ -495,23 +495,10 @@ def captar_editais_bbmnet(
                 dias_recentes=dias_recentes,
             )
 
-            # Buscar detalhes de cada edital
-            editais_detalhados = []
-            for edital_resumo in editais_raw:
-                uid = edital_resumo.get("uniqueId")
-                if uid:
-                    detalhe = scraper.buscar_detalhe_edital(uid)
-                    if detalhe:
-                        editais_detalhados.append(detalhe)
-                    else:
-                        # Se não conseguiu detalhe, usa o resumo
-                        editais_detalhados.append(edital_resumo)
-                    time.sleep(0.3)  # Rate limiting
-
-            # Converter para formato SGL
+            # Converter direto do resumo (sem buscar detalhe = muito mais rapido)
             editais_sgl = [
                 BBMNETScraper.converter_para_sgl(e, uf_busca=uf)
-                for e in editais_detalhados
+                for e in editais_raw
             ]
 
             todos_editais.extend(editais_sgl)
