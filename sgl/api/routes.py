@@ -382,6 +382,25 @@ def importar_editais_licitar():
 
     return jsonify(stats), 200
 
+@api_bp.route('/editais/limpar-rejeitados', methods=['POST'])
+@jwt_required()
+def limpar_rejeitados():
+    """Remove editais rejeitados com mais de 7 dias."""
+    from datetime import timedelta
+    limite = datetime.utcnow() - timedelta(days=7)
+    rejeitados = Edital.query.filter(
+        Edital.status == 'rejeitado',
+        Edital.data_publicacao < limite
+    ).all()
+    total = len(rejeitados)
+    for e in rejeitados:
+        # Remover triagem associada
+        Triagem.query.filter_by(edital_id=e.id).delete()
+        db.session.delete(e)
+    db.session.commit()
+    current_app.logger.info(f'Limpeza: {total} editais rejeitados removidos')
+    return jsonify({'removidos': total}), 200
+
 @api_bp.route('/scheduler/status', methods=['GET'])
 @jwt_required()
 def scheduler_status():
@@ -792,6 +811,21 @@ def dashboard_stats():
         'plataforma_origem': e.plataforma_origem,
         'data_publicacao': e.data_publicacao.isoformat() if e.data_publicacao else None,
     } for e in recentes]
+    # Ultima captacao por plataforma
+    ultimas_captacoes = {}
+    for plat in ['pncp', 'bbmnet', 'licitardigital']:
+        ultimo = Edital.query.filter_by(plataforma_origem=plat).order_by(Edital.id.desc()).first()
+        if ultimo and ultimo.data_publicacao:
+            ultimas_captacoes[plat] = ultimo.created_at.isoformat() if hasattr(ultimo, 'created_at') and ultimo.created_at else ultimo.data_publicacao.isoformat()
+        elif ultimo:
+            ultimas_captacoes[plat] = None
+        else:
+            ultimas_captacoes[plat] = None
+    # Contar por plataforma
+    por_plataforma = {}
+    for plat in ['pncp', 'bbmnet', 'licitardigital']:
+        por_plataforma[plat] = Edital.query.filter_by(plataforma_origem=plat).count()
+
     return jsonify({
         'editais_captados': total_editais,
         'pendentes_triagem': editais_pendentes,
@@ -802,4 +836,6 @@ def dashboard_stats():
         'processos_ativos': processos_ativos,
         'fornecedores_total': total_fornecedores,
         'editais_recentes': editais_recentes,
+        'ultimas_captacoes': ultimas_captacoes,
+        'por_plataforma': por_plataforma,
     })

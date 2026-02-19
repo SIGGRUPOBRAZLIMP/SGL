@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { getDashboardStats } from '../services/api'
-import { FileText, Filter, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import { getDashboardStats, limparRejeitados } from '../services/api'
+import { FileText, Filter, CheckCircle, XCircle, AlertCircle, Clock, Trash2, Globe, Shield, Zap } from 'lucide-react'
 
 function StatCard({ icon: Icon, label, value, color, sub }) {
   const colors = {
@@ -10,6 +10,27 @@ function StatCard({ icon: Icon, label, value, color, sub }) {
     yellow: 'bg-warning-50 text-warning-500',
     red: 'bg-danger-50 text-danger-500',
   }
+  const handleLimpar = async () => {
+    if (!window.confirm('Remover editais rejeitados com mais de 7 dias?')) return
+    setLimpando(true)
+    try {
+      const r = await limparRejeitados()
+      setLimpResult(r.data)
+      loadStats()
+    } catch (err) {
+      setLimpResult({ erro: 'Erro ao limpar' })
+    } finally {
+      setLimpando(false)
+      setTimeout(() => setLimpResult(null), 5000)
+    }
+  }
+
+  const formatDate = (iso) => {
+    if (!iso) return 'Nunca'
+    const d = new Date(iso)
+    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  }
+
   return (
     <div className="card flex items-center gap-4">
       <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colors[color]}`}>
@@ -28,6 +49,8 @@ export default function Dashboard() {
   const { user } = useAuth()
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [limpando, setLimpando] = useState(false)
+  const [limpResult, setLimpResult] = useState(null)
 
 
   useEffect(() => {
@@ -69,6 +92,66 @@ export default function Dashboard() {
             <StatCard icon={Filter} label="Pendentes Triagem" value={stats?.pendentes_triagem ?? 0} color="yellow" />
             <StatCard icon={CheckCircle} label="Aprovados" value={stats?.aprovados ?? 0} color="green" />
             <StatCard icon={XCircle} label="Rejeitados" value={stats?.rejeitados ?? 0} color="red" />
+          </div>
+
+          {/* Últimas Captações + Limpeza */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+            <div className="card">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <Clock size={20} className="text-primary-600" /> Últimas Captações
+              </h2>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Globe size={16} className="text-blue-600" />
+                    <span className="font-medium text-blue-700">PNCP</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm text-gray-600">{formatDate(stats?.ultimas_captacoes?.pncp)}</span>
+                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{stats?.por_plataforma?.pncp || 0}</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Shield size={16} className="text-green-600" />
+                    <span className="font-medium text-green-700">BBMNET</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm text-gray-600">{formatDate(stats?.ultimas_captacoes?.bbmnet)}</span>
+                    <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{stats?.por_plataforma?.bbmnet || 0}</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Zap size={16} className="text-purple-600" />
+                    <span className="font-medium text-purple-700">Licitar Digital</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm text-gray-600">{formatDate(stats?.ultimas_captacoes?.licitardigital)}</span>
+                    <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">{stats?.por_plataforma?.licitardigital || 0}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <Trash2 size={20} className="text-red-500" /> Manutenção
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Remove editais rejeitados com mais de 7 dias para liberar espaço no banco.
+              </p>
+              <button onClick={handleLimpar} disabled={limpando}
+                className="w-full py-2 px-4 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 font-medium text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+                <Trash2 size={16} />
+                {limpando ? 'Limpando...' : `Limpar Rejeitados (${stats?.rejeitados || 0})`}
+              </button>
+              {limpResult && (
+                <div className={`mt-3 p-2 rounded text-sm ${limpResult.erro ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+                  {limpResult.erro || `✅ ${limpResult.removidos} editais removidos`}
+                </div>
+              )}
+            </div>
           </div>
 
           {stats?.editais_recentes?.length > 0 && (
