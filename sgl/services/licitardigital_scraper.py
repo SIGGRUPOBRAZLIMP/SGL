@@ -10,6 +10,11 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
+try:
+    import cloudscraper
+    HAS_CLOUDSCRAPER = True
+except ImportError:
+    HAS_CLOUDSCRAPER = False
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -30,7 +35,7 @@ class LicitarDigitalScraper:
     def __init__(self, username: str, password: str):
         self.username = username
         self.password = password
-        self.session = requests.Session()
+        self.session = cloudscraper.create_scraper() if HAS_CLOUDSCRAPER else requests.Session()
 
         # Retry strategy
         retry = Retry(

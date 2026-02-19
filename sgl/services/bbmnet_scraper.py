@@ -396,6 +396,8 @@ class BBMNETScraper:
         municipio = endereco.get("cidade", "") if isinstance(endereco, dict) else ""
 
         # Se não tem UF no endereço, tentar pegar do edital ou do contexto de busca
+        if not uf and isinstance(orgao.get("uf"), str):
+            uf = orgao["uf"]
         if not uf and isinstance(edital_bbmnet.get("uf"), str):
             uf = edital_bbmnet["uf"]
         if not uf and uf_busca:
