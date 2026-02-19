@@ -774,27 +774,32 @@ def dashboard_stats():
     total_editais = Edital.query.count()
     editais_pendentes = Edital.query.filter_by(status='captado').count()
     editais_aprovados = Edital.query.filter_by(status='aprovado').count()
+    editais_rejeitados = Edital.query.filter_by(status='rejeitado').count()
     editais_em_cotacao = Edital.query.filter_by(status='em_cotacao').count()
-    
     total_processos = Processo.query.count()
     processos_ativos = Processo.query.filter(
         Processo.status.in_(['aguardando', 'em_cotacao', 'cotado', 'em_analise', 'pronto', 'em_disputa'])
     ).count()
-    
     total_fornecedores = Fornecedor.query.filter_by(ativo=True).count()
-    
+    recentes = Edital.query.order_by(Edital.id.desc()).limit(10).all()
+    editais_recentes = [{
+        'id': e.id,
+        'orgao_razao_social': e.orgao_razao_social,
+        'objeto_resumo': e.objeto_resumo,
+        'uf': e.uf,
+        'valor_estimado': str(e.valor_estimado) if e.valor_estimado else None,
+        'status': e.status,
+        'plataforma_origem': e.plataforma_origem,
+        'data_publicacao': e.data_publicacao.isoformat() if e.data_publicacao else None,
+    } for e in recentes]
     return jsonify({
-        'editais': {
-            'total': total_editais,
-            'pendentes_triagem': editais_pendentes,
-            'aprovados': editais_aprovados,
-            'em_cotacao': editais_em_cotacao,
-        },
-        'processos': {
-            'total': total_processos,
-            'ativos': processos_ativos,
-        },
-        'fornecedores': {
-            'total': total_fornecedores,
-        }
+        'editais_captados': total_editais,
+        'pendentes_triagem': editais_pendentes,
+        'aprovados': editais_aprovados,
+        'rejeitados': editais_rejeitados,
+        'em_cotacao': editais_em_cotacao,
+        'processos_total': total_processos,
+        'processos_ativos': processos_ativos,
+        'fornecedores_total': total_fornecedores,
+        'editais_recentes': editais_recentes,
     })
