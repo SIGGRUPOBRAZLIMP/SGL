@@ -311,7 +311,7 @@ class BBMNETScraper:
         self,
         uf: str,
         modalidade_id: int = 3,
-        max_resultados: int = 3000,
+        max_resultados: int = 500,
         dias_recentes: int = 30,
     ) -> list:
         from datetime import datetime, timedelta
@@ -360,7 +360,7 @@ class BBMNETScraper:
                 else:
                     encerrados_seguidos += 1
             skip += take
-            time.sleep(0.3)
+            time.sleep(0.1)
             if encerrados_seguidos >= 20:
                 logger.info(f'BBMNET UF={uf}: parando apos {encerrados_seguidos} encerrados (skip={skip})')
                 break
@@ -504,7 +504,7 @@ def captar_editais_bbmnet(
             todos_editais.extend(editais_sgl)
             stats_por_uf[uf] = {
                 "encontrados": len(editais_raw),
-                "detalhados": len(editais_detalhados),
+                "detalhados": len(editais_sgl),
                 "convertidos": len(editais_sgl),
             }
 
