@@ -1,7 +1,8 @@
 """
 SGL - Rotas da API REST
 """
-from datetime import datetime, timezone
+from datetime import datetime
+    from sqlalchemy import func, timezone
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import (
     create_access_token, create_refresh_token,
@@ -118,10 +119,10 @@ def listar_editais():
     if busca:
         query = query.filter(
             db.or_(
-                Edital.objeto_resumo.ilike(f'%{busca}%'),
-                Edital.orgao_razao_social.ilike(f'%{busca}%'),
+                func.unaccent(Edital.objeto_resumo).ilike(func.unaccent(f'%{busca}%')),
+                func.unaccent(Edital.orgao_razao_social).ilike(func.unaccent(f'%{busca}%')),
                 Edital.numero_pregao.ilike(f'%{busca}%'),
-                Edital.municipio.ilike(f'%{busca}%'),
+                func.unaccent(Edital.municipio).ilike(func.unaccent(f'%{busca}%')),
             )
         )
     
@@ -130,10 +131,10 @@ def listar_editais():
         # Buscar por palavras-chave (ex: "Pregão Eletrônico" match "Pregão - Eletrônico" e "Pregão (Setor público)")
         palavras = [p.strip() for p in modalidade.replace('(', ' ').replace(')', ' ').replace('-', ' ').split() if len(p.strip()) > 2]
         if palavras:
-            filtros_mod = [Edital.modalidade_nome.ilike(f'%{p}%') for p in palavras]
+            filtros_mod = [func.unaccent(Edital.modalidade_nome).ilike(func.unaccent(f'%{p}%')) for p in palavras]
             query = query.filter(db.or_(*filtros_mod))
     if municipio:
-        query = query.filter(db.or_(Edital.municipio.ilike(f'%{municipio}%'), Edital.orgao_razao_social.ilike(f'%{municipio}%')))
+        query = query.filter(db.or_(func.unaccent(Edital.municipio).ilike(func.unaccent(f'%{municipio}%')), func.unaccent(Edital.orgao_razao_social).ilike(func.unaccent(f'%{municipio}%'))))
     if srp:
         if srp == 'sim':
             query = query.filter(Edital.srp == True)
