@@ -131,9 +131,9 @@ def listar_editais():
         palavras = [p.strip() for p in modalidade.replace('(', ' ').replace(')', ' ').replace('-', ' ').split() if len(p.strip()) > 2]
         if palavras:
             filtros_mod = [Edital.modalidade_nome.ilike(f'%{p}%') for p in palavras]
-            query = query.filter(db.and_(*filtros_mod))
+            query = query.filter(db.or_(*filtros_mod))
     if municipio:
-        query = query.filter(Edital.municipio.ilike(f'%{municipio}%'))
+        query = query.filter(db.or_(Edital.municipio.ilike(f'%{municipio}%'), Edital.orgao_razao_social.ilike(f'%{municipio}%')))
     if srp:
         if srp == 'sim':
             query = query.filter(Edital.srp == True)
