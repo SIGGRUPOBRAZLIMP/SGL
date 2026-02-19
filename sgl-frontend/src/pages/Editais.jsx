@@ -177,7 +177,7 @@ export default function Editais() {
                 <label className="block text-xs font-medium text-gray-500 mb-1">Modalidade</label>
                 <select value={filters.modalidade} onChange={(e) => handleFilterChange('modalidade', e.target.value)} className="input-field text-sm">
                   <option value="">Todas</option>
-                  {MODALIDADES.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
+                  {MODALIDADES.map(m => <option key={m.id} value={m.nome}>{m.nome}</option>)}
                 </select>
               </div>
 
