@@ -89,7 +89,7 @@ class LicitarDigitalScraper:
 
             payload = {
                 "cmd": "request.get",
-                "url": "https://app2.licitardigital.com.br/",
+                "url": "https://manager-api.licitardigital.com.br/",
                 "maxTimeout": 60000,
             }
 
