@@ -10,6 +10,42 @@ function StatCard({ icon: Icon, label, value, color, sub }) {
     yellow: 'bg-warning-50 text-warning-500',
     red: 'bg-danger-50 text-danger-500',
   }
+  return (
+    <div className="card flex items-center gap-4">
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colors[color]}`}>
+        <Icon size={24} />
+      </div>
+      <div>
+        <p className="text-2xl font-bold text-gray-900">{value ?? '—'}</p>
+        <p className="text-sm text-gray-500">{label}</p>
+        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  )
+}
+
+export default function Dashboard() {
+  const { user } = useAuth()
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [limpando, setLimpando] = useState(false)
+  const [limpResult, setLimpResult] = useState(null)
+
+  useEffect(() => {
+    loadStats()
+  }, [])
+
+  const loadStats = async () => {
+    try {
+      const r = await getDashboardStats()
+      setStats(r.data)
+    } catch (err) {
+      console.error('Erro ao carregar stats:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleLimpar = async () => {
     if (!window.confirm('Remover editais rejeitados com mais de 7 dias?')) return
     setLimpando(true)
@@ -32,45 +68,6 @@ function StatCard({ icon: Icon, label, value, color, sub }) {
   }
 
   return (
-    <div className="card flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colors[color]}`}>
-        <Icon size={24} />
-      </div>
-      <div>
-        <p className="text-2xl font-bold text-gray-900">{value ?? '—'}</p>
-        <p className="text-sm text-gray-500">{label}</p>
-        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
-      </div>
-    </div>
-  )
-}
-
-export default function Dashboard() {
-  const { user } = useAuth()
-  const [stats, setStats] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [limpando, setLimpando] = useState(false)
-  const [limpResult, setLimpResult] = useState(null)
-
-
-  useEffect(() => {
-    loadStats()
-  }, [])
-
-  const loadStats = async () => {
-    try {
-      const r = await getDashboardStats()
-      setStats(r.data)
-    } catch (err) {
-      console.error('Erro ao carregar stats:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-
-
-  return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -78,8 +75,6 @@ export default function Dashboard() {
           <p className="text-gray-500">Bem-vindo ao painel do SGL</p>
         </div>
       </div>
-
-
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -94,7 +89,7 @@ export default function Dashboard() {
             <StatCard icon={XCircle} label="Rejeitados" value={stats?.rejeitados ?? 0} color="red" />
           </div>
 
-          {/* Últimas Captações + Limpeza */}
+          {/* Últimas Captações + Manutenção */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
             <div className="card">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -192,7 +187,7 @@ export default function Dashboard() {
             <div className="card text-center py-12">
               <AlertCircle size={48} className="mx-auto text-gray-300 mb-4" />
               <h3 className="text-lg font-medium text-gray-600 mb-2">Nenhum edital captado ainda</h3>
-              <p className="text-gray-400 mb-4">Clique em "Captar Pregões" para buscar editais do PNCP, BBMNET e Licitar Digital</p>
+              <p className="text-gray-400 mb-4">Vá em Captação para buscar editais do PNCP, BBMNET e Licitar Digital</p>
             </div>
           )}
         </>
