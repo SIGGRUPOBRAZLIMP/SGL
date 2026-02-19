@@ -134,7 +134,7 @@ def listar_editais():
             filtros_mod = [func.unaccent(Edital.modalidade_nome).ilike(func.unaccent(f'%{p}%')) for p in palavras]
             query = query.filter(db.or_(*filtros_mod))
     if municipio:
-        query = query.filter(db.or_(func.unaccent(Edital.municipio).ilike(func.unaccent(f'%{municipio}%')), func.unaccent(Edital.orgao_razao_social).ilike(func.unaccent(f'%{municipio}%'))))
+        query = query.filter(db.or_(func.unaccent(Edital.municipio).ilike(func.unaccent(f'%{municipio}%')), func.unaccent(Edital.orgao_razao_social).ilike(func.unaccent(f'%{municipio}%')), func.unaccent(Edital.objeto_resumo).ilike(func.unaccent(f'%{municipio}%'))))
     if srp:
         if srp == 'sim':
             query = query.filter(Edital.srp == True)
