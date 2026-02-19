@@ -311,64 +311,63 @@ class BBMNETScraper:
         self,
         uf: str,
         modalidade_id: int = 3,
-        max_resultados: int = 500,
+        max_resultados: int = 3000,
         dias_recentes: int = 30,
     ) -> list:
-        """
-        Busca todos os editais de uma UF, paginando automaticamente.
-        Filtra por data de publicação recente.
-
-        Args:
-            uf: Sigla do estado
-            modalidade_id: 3 = Pregão Setor Público
-            max_resultados: Limite de segurança
-            dias_recentes: Filtrar editais dos últimos N dias
-
-        Returns:
-            Lista de editais
-        """
-        data_corte = datetime.now() - timedelta(days=dias_recentes)
-        editais_recentes = []
+        from datetime import datetime, timedelta
+        hoje = datetime.now()
+        editais_abertos = []
         skip = 0
         take = 50
+        encerrados_seguidos = 0
 
         while skip < max_resultados:
-            resultado = self.buscar_editais(
-                uf=uf,
-                modalidade_id=modalidade_id,
-                take=take,
-                skip=skip,
-            )
-
-            editais = resultado.get("editais", [])
+            resultado = self.buscar_editais(uf=uf, modalidade_id=modalidade_id, take=take, skip=skip)
+            editais = resultado.get('editais', [])
             if not editais:
                 break
-
             for edital in editais:
-                # Filtrar por data de publicação
-                pub_str = edital.get("publishAt") or edital.get("createdAt", "")
-                if pub_str:
-                    try:
-                        pub_date = datetime.fromisoformat(pub_str.replace("Z", "+00:00").split("+")[0])
-                        if pub_date < data_corte:
-                            # Editais estão ordenados, se passou da data corte, pode parar
-                            continue
-                    except (ValueError, TypeError):
-                        pass
-
-                editais_recentes.append(edital)
-
+                status = edital.get('editalStatus', {})
+                status_name = status.get('name', '') if isinstance(status, dict) else ''
+                manter = False
+                if status_name.lower() in ['publicado', 'aberto', 'em andamento']:
+                    manter = True
+                    encerrados_seguidos = 0
+                if not manter:
+                    for campo in ['dataRealizacao', 'disputeStartDate', 'publishAt']:
+                        ds = edital.get(campo, '')
+                        if ds:
+                            try:
+                                dt = datetime.fromisoformat(ds.replace('Z','').split('+')[0])
+                                if dt >= hoje:
+                                    manter = True
+                                    encerrados_seguidos = 0
+                                    break
+                            except (ValueError, TypeError):
+                                pass
+                if not manter:
+                    pub_str = edital.get('publishAt') or edital.get('createdAt') or ''
+                    if pub_str:
+                        try:
+                            pub_date = datetime.fromisoformat(pub_str.replace('Z','').split('+')[0])
+                            if pub_date >= hoje - timedelta(days=dias_recentes):
+                                manter = True
+                                encerrados_seguidos = 0
+                        except (ValueError, TypeError):
+                            pass
+                if manter:
+                    editais_abertos.append(edital)
+                else:
+                    encerrados_seguidos += 1
             skip += take
-
-            # Rate limiting
-            time.sleep(0.5)
-
-            # Se recebeu menos que o pedido, acabou
+            time.sleep(0.3)
+            if encerrados_seguidos >= 20:
+                logger.info(f'BBMNET UF={uf}: parando apos {encerrados_seguidos} encerrados (skip={skip})')
+                break
             if len(editais) < take:
                 break
-
-        logger.info(f"BBMNET UF={uf}: {len(editais_recentes)} editais recentes ({dias_recentes} dias)")
-        return editais_recentes
+        logger.info(f'BBMNET UF={uf}: {len(editais_abertos)} editais abertos (skip={skip})')
+        return editais_abertos
 
     # ============================================================
     # CONVERSÃO PARA FORMATO SGL
