@@ -170,6 +170,23 @@ def executar_captacao():
     resultado_pncp['total_geral'] = resultado_pncp.get('novos_salvos', 0) + resultado_bbmnet.get('novos_salvos', 0) + resultado_licitar.get('novos_salvos', 0)
     return jsonify(resultado_pncp)
 
+# CAPTACAO PNCP (manual - separado)
+@api_bp.route('/editais/captar-pncp', methods=['POST'])
+@jwt_required()
+def executar_captacao_pncp_only():
+    data = request.get_json() or {}
+    try:
+        service = CaptacaoService(current_app.config)
+        resultado = service.executar_captacao(
+            periodo_dias=data.get('periodo_dias', 3),
+            ufs=data.get('ufs'),
+            modalidades=data.get('modalidades'),
+            filtros_ids=data.get('filtros_ids')
+        )
+        return jsonify({'sucesso': True, 'plataforma': 'pncp', **resultado}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
 # CAPTACAO BBMNET (manual)
 @api_bp.route('/editais/captar-bbmnet', methods=['POST'])
 @jwt_required()
@@ -189,6 +206,19 @@ def executar_captacao_bbmnet():
         return jsonify({'erro': str(e)}), 500
 
 
+
+# CAPTACAO LICITAR DIGITAL (manual)
+@api_bp.route('/editais/captar-licitar', methods=['POST'])
+@jwt_required()
+def executar_captacao_licitar_only():
+    data = request.get_json() or {}
+    periodo_dias = data.get('periodo_dias', 7)
+    try:
+        from ..services.licitardigital_integration import executar_captacao_licitardigital as captar_licitar
+        resultado = captar_licitar(app_config=current_app.config, periodo_dias=periodo_dias)
+        return jsonify({'sucesso': True, 'plataforma': 'licitardigital', **resultado}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
 
 @api_bp.route('/scheduler/status', methods=['GET'])
 @jwt_required()

@@ -1,4 +1,94 @@
-import { useState } from 'react'
+"""
+Patch: Separar captação em 3 plataformas independentes
+- Backend: 3 endpoints separados (PNCP, BBMNET, Licitar)
+- Frontend: 3 blocos com botões individuais
+"""
+import os
+
+# ============================================================
+# 1. BACKEND: Adicionar endpoint captar-pncp e captar-licitar
+# ============================================================
+path_routes = r'C:\SGL-SISTEMA DE GESTAO DE LICITACOES\sgl\api\routes.py'
+content = open(path_routes, 'r', encoding='utf-8').read()
+
+# Verificar se já existe captar-pncp
+if '/editais/captar-pncp' not in content:
+    # Inserir antes do endpoint captar-bbmnet
+    marker = "# CAPTACAO BBMNET (manual)"
+    new_pncp = """# CAPTACAO PNCP (manual - separado)
+@api_bp.route('/editais/captar-pncp', methods=['POST'])
+@jwt_required()
+def executar_captacao_pncp_only():
+    data = request.get_json() or {}
+    try:
+        service = CaptacaoService(current_app.config)
+        resultado = service.executar_captacao(
+            periodo_dias=data.get('periodo_dias', 3),
+            ufs=data.get('ufs'),
+            modalidades=data.get('modalidades'),
+            filtros_ids=data.get('filtros_ids')
+        )
+        return jsonify({'sucesso': True, 'plataforma': 'pncp', **resultado}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+"""
+    if marker in content:
+        content = content.replace(marker, new_pncp + marker)
+        print('OK - Endpoint /captar-pncp adicionado')
+    else:
+        print('AVISO - marker BBMNET nao encontrado')
+
+# Adicionar endpoint captar-licitar
+if '/editais/captar-licitar' not in content:
+    # Inserir antes de @api_bp.route('/scheduler/status'
+    marker2 = "@api_bp.route('/scheduler/status'"
+    new_licitar = """# CAPTACAO LICITAR DIGITAL (manual)
+@api_bp.route('/editais/captar-licitar', methods=['POST'])
+@jwt_required()
+def executar_captacao_licitar_only():
+    data = request.get_json() or {}
+    periodo_dias = data.get('periodo_dias', 7)
+    try:
+        from ..services.licitardigital_integration import executar_captacao_licitardigital as captar_licitar
+        resultado = captar_licitar(app_config=current_app.config, periodo_dias=periodo_dias)
+        return jsonify({'sucesso': True, 'plataforma': 'licitardigital', **resultado}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+"""
+    if marker2 in content:
+        content = content.replace(marker2, new_licitar + marker2)
+        print('OK - Endpoint /captar-licitar adicionado')
+    else:
+        print('AVISO - marker scheduler nao encontrado')
+
+open(path_routes, 'w', encoding='utf-8').write(content)
+
+# ============================================================
+# 2. FRONTEND: api.js - adicionar funções separadas
+# ============================================================
+path_api = r'C:\SGL-SISTEMA DE GESTAO DE LICITACOES\sgl-frontend\src\services\api.js'
+content = open(path_api, 'r', encoding='utf-8').read()
+
+if 'captarPNCP' not in content:
+    old = "export const captarEditais = (data) => api.post('/editais/captar', data)"
+    new = """export const captarEditais = (data) => api.post('/editais/captar', data)
+export const captarPNCP = (data) => api.post('/editais/captar-pncp', data)
+export const captarBBMNET = (data) => api.post('/editais/captar-bbmnet', data)
+export const captarLicitar = (data) => api.post('/editais/captar-licitar', data)"""
+    content = content.replace(old, new)
+    open(path_api, 'w', encoding='utf-8').write(content)
+    print('OK - api.js: 3 funções de captação separadas')
+else:
+    print('api.js já tem captarPNCP')
+
+# ============================================================
+# 3. FRONTEND: Reescrever Captacao.jsx
+# ============================================================
+path_captacao = r'C:\SGL-SISTEMA DE GESTAO DE LICITACOES\sgl-frontend\src\pages\Captacao.jsx'
+
+new_captacao = r"""import { useState } from 'react'
 import { captarPNCP, captarBBMNET, captarLicitar } from '../services/api'
 import { Search, RefreshCw, CheckCircle, MapPin, Calendar, AlertTriangle, Globe, Shield, Zap } from 'lucide-react'
 
@@ -259,3 +349,10 @@ function StatRow({ label, value, highlight }) {
     </div>
   )
 }
+"""
+
+open(path_captacao, 'w', encoding='utf-8').write(new_captacao)
+print('OK - Captacao.jsx reescrito com 3 plataformas independentes')
+
+print('\n=== PATCH COMPLETO ===')
+print('Proximo: git add -A && git commit && git push')
