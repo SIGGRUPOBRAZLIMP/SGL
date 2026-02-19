@@ -2,7 +2,7 @@
 SGL - Rotas da API REST
 """
 from datetime import datetime
-    from sqlalchemy import func, timezone
+from sqlalchemy import func
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import (
     create_access_token, create_refresh_token,
