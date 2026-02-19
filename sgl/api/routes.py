@@ -308,6 +308,80 @@ def executar_captacao_licitar_only():
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
+# IMPORTACAO LICITAR DIGITAL (via script local)
+@api_bp.route('/editais/importar-licitar', methods=['POST'])
+@jwt_required()
+def importar_editais_licitar():
+    data = request.get_json() or {}
+    editais_list = data.get('editais', [])
+    if not editais_list:
+        return jsonify({'erro': 'Nenhum edital enviado'}), 400
+
+    stats = {'novos_salvos': 0, 'duplicados': 0, 'erros': 0}
+
+    for edital_data in editais_list:
+        try:
+            hash_scraper = edital_data.get('hash_scraper')
+            if hash_scraper:
+                existente = Edital.query.filter_by(hash_scraper=hash_scraper).first()
+                if existente:
+                    stats['duplicados'] += 1
+                    continue
+
+            orgao = edital_data.get('orgao_razao_social')
+            processo = edital_data.get('numero_processo')
+            if orgao and processo:
+                existente = Edital.query.filter_by(
+                    orgao_razao_social=orgao, numero_processo=processo,
+                    plataforma_origem='licitardigital').first()
+                if existente:
+                    stats['duplicados'] += 1
+                    continue
+
+            def _parse_dt(s):
+                if not s:
+                    return None
+                try:
+                    clean = s.replace('Z', '').split('+')[0].split('-03:00')[0]
+                    return datetime.fromisoformat(clean)
+                except (ValueError, TypeError):
+                    return None
+
+            edital = Edital(
+                hash_scraper=hash_scraper,
+                numero_pregao=edital_data.get('numero_pregao'),
+                numero_processo=edital_data.get('numero_processo'),
+                orgao_cnpj=edital_data.get('orgao_cnpj'),
+                orgao_razao_social=edital_data.get('orgao_razao_social'),
+                unidade_nome=edital_data.get('unidade_nome'),
+                uf=edital_data.get('uf'),
+                municipio=edital_data.get('municipio'),
+                objeto_resumo=edital_data.get('objeto_resumo'),
+                objeto_completo=edital_data.get('objeto_completo'),
+                modalidade_nome=edital_data.get('modalidade_nome'),
+                srp=edital_data.get('srp', False),
+                data_publicacao=_parse_dt(edital_data.get('data_publicacao')),
+                data_abertura_proposta=_parse_dt(edital_data.get('data_abertura_proposta')),
+                data_encerramento_proposta=_parse_dt(edital_data.get('data_encerramento_proposta')),
+                plataforma_origem='licitardigital',
+                url_original=edital_data.get('url_original'),
+                link_sistema_origem=edital_data.get('link_sistema_origem'),
+                situacao_pncp=edital_data.get('situacao_pncp'),
+                status='captado',
+            )
+            db.session.add(edital)
+            db.session.flush()
+            triagem = Triagem(edital_id=edital.id, decisao='pendente', prioridade='media')
+            db.session.add(triagem)
+            db.session.commit()
+            stats['novos_salvos'] += 1
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error('Erro importar edital: %s', e)
+            stats['erros'] += 1
+
+    return jsonify(stats), 200
+
 @api_bp.route('/scheduler/status', methods=['GET'])
 @jwt_required()
 def scheduler_status():
