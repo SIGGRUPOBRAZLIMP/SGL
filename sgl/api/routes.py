@@ -401,25 +401,6 @@ def limpar_rejeitados():
     current_app.logger.info(f'Limpeza: {total} editais rejeitados removidos')
     return jsonify({'removidos': total}), 200
 
-@api_bp.route('/editais/limpar-rejeitados', methods=['POST'])
-@jwt_required()
-def limpar_rejeitados():
-    """Remove editais rejeitados com mais de 7 dias."""
-    from datetime import timedelta
-    limite = datetime.utcnow() - timedelta(days=7)
-    rejeitados = Edital.query.filter(
-        Edital.status == 'rejeitado',
-        Edital.data_publicacao < limite
-    ).all()
-    total = len(rejeitados)
-    for e in rejeitados:
-        # Remover triagem associada
-        Triagem.query.filter_by(edital_id=e.id).delete()
-        db.session.delete(e)
-    db.session.commit()
-    current_app.logger.info(f'Limpeza: {total} editais rejeitados removidos')
-    return jsonify({'removidos': total}), 200
-
 @api_bp.route('/scheduler/status', methods=['GET'])
 @jwt_required()
 def scheduler_status():
