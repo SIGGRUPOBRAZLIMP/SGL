@@ -63,7 +63,7 @@ export default function Dashboard() {
 
   const formatDate = (iso) => {
     if (!iso) return 'Nunca'
-    const d = new Date(iso)
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z')
     return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
   }
 

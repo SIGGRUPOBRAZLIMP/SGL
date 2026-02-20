@@ -811,14 +811,12 @@ def dashboard_stats():
         'plataforma_origem': e.plataforma_origem,
         'data_publicacao': e.data_publicacao.isoformat() if e.data_publicacao else None,
     } for e in recentes]
-    # Ultima captacao por plataforma
+    # Ultima captacao por plataforma (usa created_at = quando foi salvo no SGL)
     ultimas_captacoes = {}
     for plat in ['pncp', 'bbmnet', 'licitardigital']:
         ultimo = Edital.query.filter_by(plataforma_origem=plat).order_by(Edital.id.desc()).first()
-        if ultimo and ultimo.data_publicacao:
-            ultimas_captacoes[plat] = ultimo.created_at.isoformat() if hasattr(ultimo, 'created_at') and ultimo.created_at else ultimo.data_publicacao.isoformat()
-        elif ultimo:
-            ultimas_captacoes[plat] = None
+        if ultimo and ultimo.created_at:
+            ultimas_captacoes[plat] = ultimo.created_at.isoformat()
         else:
             ultimas_captacoes[plat] = None
     # Contar por plataforma
