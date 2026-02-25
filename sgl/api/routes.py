@@ -239,12 +239,17 @@ def executar_captacao():
         modalidades=data.get('modalidades'),
         filtros_ids=data.get('filtros_ids')
     )
-    periodo = data.get('periodo_dias') or 3
-    ufs_busca = data.get('ufs') or ['RJ', 'SP', 'MG', 'ES']
+    periodo = data.get('periodo_dias') or int(os.environ.get('CAPTACAO_PERIODO_DIAS_DEFAULT', 7))
+    ufs_busca = data.get('ufs') or os.environ.get('PNCP_UFS_DEFAULT', 'RJ,SP,MG,ES').split(',')
     resultado_bbmnet = {}
     try:
         from ..services.bbmnet_integration import executar_captacao_bbmnet as captar_bbmnet
-        resultado_bbmnet = captar_bbmnet(app_config=current_app.config, periodo_dias=periodo, ufs=ufs_busca)
+        resultado_bbmnet = captar_bbmnet(
+            app_config=current_app.config,
+            periodo_dias=periodo,
+            ufs=ufs_busca,
+            modalidade_ids=data.get('modalidades_bbmnet'),
+        )
     except Exception as e:
         resultado_bbmnet = {'erro': str(e)}
     resultado_licitar = {}

@@ -469,7 +469,7 @@ def captar_editais_bbmnet(
     username: str,
     password: str,
     ufs: list = None,
-    modalidade_id: int = 3,
+    modalidade_ids: list = None,
     dias_recentes: int = 7,
 ) -> dict:
     """
@@ -478,15 +478,20 @@ def captar_editais_bbmnet(
     Args:
         username: CPF de login no BBMNET
         password: Senha
-        ufs: Lista de UFs (padrão: RJ, SP, MG, ES)
-        modalidade_id: 3 = Pregão Setor Público
+        ufs: Lista de UFs (padrão via .env)
+        modalidade_ids: Lista de IDs de modalidades (padrão via .env)
         dias_recentes: Buscar últimos N dias
 
     Returns:
         dict com estatísticas e lista de editais
     """
+    import os
+
     if ufs is None:
         ufs = UFS_PADRAO
+    if modalidade_ids is None:
+        env_mod = os.environ.get('BBMNET_MODALIDADES_DEFAULT', '3,6')
+        modalidade_ids = [int(m.strip()) for m in env_mod.split(',') if m.strip()]
 
     scraper = BBMNETScraper(username, password)
 
@@ -499,37 +504,42 @@ def captar_editais_bbmnet(
             "stats": {},
         }
 
-    # Buscar editais por UF
+    # Buscar editais por UF x Modalidade
     todos_editais = []
     stats_por_uf = {}
 
     for uf in ufs:
+        uf_encontrados = 0
+        uf_convertidos = 0
         try:
-            editais_raw = scraper.buscar_todos_editais_uf(
-                uf=uf,
-                modalidade_id=modalidade_id,
-                dias_recentes=dias_recentes,
-            )
+            for mod_id in modalidade_ids:
+                editais_raw = scraper.buscar_todos_editais_uf(
+                    uf=uf,
+                    modalidade_id=mod_id,
+                    dias_recentes=dias_recentes,
+                )
 
-            # Converter direto do resumo (sem buscar detalhe = muito mais rapido)
-            editais_sgl = [
-                BBMNETScraper.converter_para_sgl(e, uf_busca=uf)
-                for e in editais_raw
-            ]
+                editais_sgl = [
+                    BBMNETScraper.converter_para_sgl(e, uf_busca=uf)
+                    for e in editais_raw
+                ]
 
-            todos_editais.extend(editais_sgl)
+                todos_editais.extend(editais_sgl)
+                uf_encontrados += len(editais_raw)
+                uf_convertidos += len(editais_sgl)
+
+                logger.info(f"BBMNET UF={uf} MOD={mod_id}: {len(editais_sgl)} editais")
+
             stats_por_uf[uf] = {
-                "encontrados": len(editais_raw),
-                "detalhados": len(editais_sgl),
-                "convertidos": len(editais_sgl),
+                "encontrados": uf_encontrados,
+                "convertidos": uf_convertidos,
             }
-
-            logger.info(f"BBMNET UF={uf}: {len(editais_sgl)} editais captados")
 
         except Exception as e:
             logger.error(f"Erro ao captar BBMNET UF={uf}: {e}")
             stats_por_uf[uf] = {"erro": str(e)}
 
+    mods_nomes = [MODALIDADES_BBMNET.get(m, str(m)) for m in modalidade_ids]
     return {
         "sucesso": True,
         "plataforma": "bbmnet",
@@ -538,7 +548,7 @@ def captar_editais_bbmnet(
             "total": len(todos_editais),
             "por_uf": stats_por_uf,
             "dias_recentes": dias_recentes,
-            "modalidade": MODALIDADES_BBMNET.get(modalidade_id, str(modalidade_id)),
+            "modalidades": mods_nomes,
         },
     }
 

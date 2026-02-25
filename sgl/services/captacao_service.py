@@ -104,7 +104,10 @@ class CaptacaoService:
         }
         
         if not modalidades:
-            modalidades = [8]  # Pregão Eletrônico por padrão
+            # Ler defaults do .env (configurável sem alterar código)
+            import os
+            env_mod = os.environ.get('PNCP_MODALIDADES_DEFAULT', '4,6,7,8,12')
+            modalidades = [int(m.strip()) for m in env_mod.split(',') if m.strip()]
         
         # Carregar filtros de prospecção ativos
         filtros = self._carregar_filtros(filtros_ids)

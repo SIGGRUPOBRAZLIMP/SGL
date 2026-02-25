@@ -11,7 +11,7 @@ from ..models.database import db, Edital, Triagem
 logger = logging.getLogger(__name__)
 
 
-def executar_captacao_bbmnet(app_config: dict, periodo_dias: int = 7, ufs: list = None) -> dict:
+def executar_captacao_bbmnet(app_config: dict, periodo_dias: int = 7, ufs: list = None, modalidade_ids: list = None) -> dict:
     """
     Executa captação completa BBMNET → SGL.
     
@@ -52,7 +52,7 @@ def executar_captacao_bbmnet(app_config: dict, periodo_dias: int = 7, ufs: list 
             username=username,
             password=password,
             ufs=ufs,
-            modalidade_id=3,  # Pregão Setor Público
+            modalidade_ids=modalidade_ids,
             dias_recentes=periodo_dias,
         )
         
