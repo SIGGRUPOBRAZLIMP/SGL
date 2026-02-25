@@ -293,6 +293,7 @@ def executar_captacao_bbmnet():
             app_config=current_app.config,
             periodo_dias=periodo_dias,
             ufs=ufs,
+            modalidade_ids=data.get('modalidades_bbmnet'),
         )
         return jsonify({'sucesso': True, 'plataforma': 'bbmnet', 'stats': resultado}), 200
     except Exception as e:
