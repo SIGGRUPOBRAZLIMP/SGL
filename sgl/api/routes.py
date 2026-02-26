@@ -1,7 +1,8 @@
 """
 SGL - Rotas da API REST
 """
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 from sqlalchemy import func
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import (
@@ -10,7 +11,7 @@ from flask_jwt_extended import (
 )
 
 from ..models.database import (
-    db, Usuario, Empresa, Edital, EditalArquivo, 
+    db, Usuario, Empresa, Edital, EditalArquivo,
     ItemEditalExtraido, Triagem, FiltroProspeccao,
     Processo, Fornecedor, ItemEdital, CotacaoFornecedor
 )
@@ -29,20 +30,20 @@ def login():
     data = request.get_json()
     email = data.get('email')
     senha = data.get('senha')
-    
+
     if not email or not senha:
         return jsonify({'error': 'Email e senha são obrigatórios'}), 400
-    
+
     usuario = Usuario.query.filter_by(email=email, ativo=True).first()
     if not usuario or not usuario.verificar_senha(senha):
         return jsonify({'error': 'Credenciais inválidas'}), 401
-    
+
     access_token = create_access_token(
         identity=str(usuario.id),
         additional_claims={'perfil': usuario.perfil, 'nome': usuario.nome}
     )
     refresh_token = create_refresh_token(identity=str(usuario.id))
-    
+
     return jsonify({
         'access_token': access_token,
         'refresh_token': refresh_token,
@@ -54,10 +55,10 @@ def login():
 def register():
     """Registro de novo usuário (somente admin)"""
     data = request.get_json()
-    
+
     if Usuario.query.filter_by(email=data.get('email')).first():
         return jsonify({'error': 'Email já cadastrado'}), 409
-    
+
     usuario = Usuario(
         nome=data['nome'],
         email=data['email'],
@@ -65,10 +66,10 @@ def register():
         empresa_id=data.get('empresa_id')
     )
     usuario.set_senha(data['senha'])
-    
+
     db.session.add(usuario)
     db.session.commit()
-    
+
     return jsonify(usuario.to_dict()), 201
 
 
@@ -81,17 +82,17 @@ def register():
 def listar_editais():
     """Lista editais com filtros completos e paginação"""
     from datetime import datetime
-    
+
     # Paginação (aceitar ambos os nomes de param)
     pagina = request.args.get('page', request.args.get('pagina', 1, type=int), type=int)
     por_pagina = request.args.get('per_page', request.args.get('por_pagina', 20, type=int), type=int)
-    
+
     # Filtros básicos
     status = request.args.get('status')
     uf = request.args.get('uf')
     plataforma = request.args.get('plataforma')
     busca = request.args.get('busca')
-    
+
     # Filtros avançados
     modalidade = request.args.get('modalidade')
     municipio = request.args.get('municipio')
@@ -106,9 +107,9 @@ def listar_editais():
     com_itens_ai = request.args.get('com_itens_ai')
     ordenar_por = request.args.get('ordenar_por', 'data_publicacao')
     ordem = request.args.get('ordem', 'desc')
-    
+
     query = Edital.query
-    
+
     # Aplicar filtros básicos
     if status:
         query = query.filter(Edital.status == status)
@@ -125,10 +126,9 @@ def listar_editais():
                 func.unaccent(Edital.municipio).ilike(func.unaccent(f'%{busca}%')),
             )
         )
-    
+
     # Filtros avançados
     if modalidade:
-        # Buscar por palavras-chave (ex: "Pregão Eletrônico" match "Pregão - Eletrônico" e "Pregão (Setor público)")
         palavras = [p.strip() for p in modalidade.replace('(', ' ').replace(')', ' ').replace('-', ' ').split() if len(p.strip()) > 2]
         if palavras:
             filtros_mod = [func.unaccent(Edital.modalidade_nome).ilike(func.unaccent(f'%{p}%')) for p in palavras]
@@ -140,7 +140,7 @@ def listar_editais():
             query = query.filter(Edital.srp == True)
         elif srp == 'nao':
             query = query.filter(Edital.srp == False)
-    
+
     # Filtros de data publicação
     if data_pub_inicio:
         try:
@@ -154,7 +154,7 @@ def listar_editais():
             query = query.filter(Edital.data_publicacao <= dt)
         except ValueError:
             pass
-    
+
     # Filtros de data certame/disputa
     if data_certame_inicio:
         try:
@@ -170,13 +170,13 @@ def listar_editais():
                 query = query.filter(Edital.data_certame <= dt)
         except ValueError:
             pass
-    
+
     # Filtros de valor
     if valor_min is not None:
         query = query.filter(Edital.valor_estimado >= valor_min)
     if valor_max is not None:
         query = query.filter(Edital.valor_estimado <= valor_max)
-    
+
     # Ordenação
     ordem_map = {
         'data_publicacao': Edital.data_publicacao,
@@ -192,7 +192,7 @@ def listar_editais():
         query = query.order_by(coluna.asc().nullslast())
     else:
         query = query.order_by(coluna.desc().nullslast())
-    
+
     paginacao = query.paginate(page=pagina, per_page=min(por_pagina, 100), error_out=False)
     return jsonify({
         'editais': [e.to_dict() for e in paginacao.items],
@@ -208,16 +208,16 @@ def obter_edital(edital_id):
     """Detalhes completos de um edital"""
     edital = Edital.query.get_or_404(edital_id)
     data = edital.to_dict(include_arquivos=True)
-    
+
     # Incluir triagem
     if edital.triagem:
         data['triagem'] = edital.triagem.to_dict()
-    
+
     # Incluir itens extraídos via AI
     itens = edital.itens_extraidos.all()
     if itens:
         data['itens_extraidos'] = [i.to_dict() for i in itens]
-    
+
     return jsonify(data)
 
 
@@ -225,11 +225,11 @@ def obter_edital(edital_id):
 @jwt_required()
 def executar_captacao():
     """
-    Executa captação manual de editais via PNCP.
-    Corpo: { periodo_dias, data_inicial, data_final, ufs, modalidades }
+    Executa captação manual de editais via PNCP + BBMNET + Licitar + ComprasGov.
+    Corpo: { periodo_dias, data_inicial, data_final, ufs, modalidades, modalidades_bbmnet, modalidades_comprasgov, incluir_legado_comprasgov }
     """
     data = request.get_json() or {}
-    
+
     service = CaptacaoService(current_app.config)
     resultado_pncp = service.executar_captacao(
         periodo_dias=data.get('periodo_dias'),
@@ -241,6 +241,8 @@ def executar_captacao():
     )
     periodo = data.get('periodo_dias') or int(os.environ.get('CAPTACAO_PERIODO_DIAS_DEFAULT', 7))
     ufs_busca = data.get('ufs') or os.environ.get('PNCP_UFS_DEFAULT', 'RJ,SP,MG,ES').split(',')
+
+    # --- BBMNET ---
     resultado_bbmnet = {}
     try:
         from ..services.bbmnet_integration import executar_captacao_bbmnet as captar_bbmnet
@@ -252,16 +254,40 @@ def executar_captacao():
         )
     except Exception as e:
         resultado_bbmnet = {'erro': str(e)}
+
+    # --- LICITAR DIGITAL ---
     resultado_licitar = {}
     try:
         from ..services.licitardigital_integration import executar_captacao_licitardigital as captar_licitar
         resultado_licitar = captar_licitar(app_config=current_app.config, periodo_dias=periodo)
     except Exception as e:
         resultado_licitar = {'erro': str(e)}
+
+    # --- COMPRAS.GOV.BR ---
+    resultado_comprasgov = {}
+    try:
+        from ..services.comprasgov_integration import executar_captacao_comprasgov
+        resultado_comprasgov = executar_captacao_comprasgov(
+            app_config=current_app.config,
+            periodo_dias=periodo,
+            ufs=ufs_busca,
+            modalidade_ids=data.get('modalidades_comprasgov'),
+            incluir_legado=data.get('incluir_legado_comprasgov', False),
+        )
+    except Exception as e:
+        resultado_comprasgov = {'erro': str(e)}
+
     resultado_pncp['bbmnet'] = resultado_bbmnet
     resultado_pncp['licitardigital'] = resultado_licitar
-    resultado_pncp['total_geral'] = resultado_pncp.get('novos_salvos', 0) + resultado_bbmnet.get('novos_salvos', 0) + resultado_licitar.get('novos_salvos', 0)
+    resultado_pncp['comprasgov'] = resultado_comprasgov
+    resultado_pncp['total_geral'] = (
+        resultado_pncp.get('novos_salvos', 0)
+        + resultado_bbmnet.get('novos_salvos', 0)
+        + resultado_licitar.get('novos_salvos', 0)
+        + resultado_comprasgov.get('novos_salvos', 0)
+    )
     return jsonify(resultado_pncp)
+
 
 # CAPTACAO PNCP (manual - separado)
 @api_bp.route('/editais/captar-pncp', methods=['POST'])
@@ -279,6 +305,7 @@ def executar_captacao_pncp_only():
         return jsonify({'sucesso': True, 'plataforma': 'pncp', **resultado}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
+
 
 # CAPTACAO BBMNET (manual)
 @api_bp.route('/editais/captar-bbmnet', methods=['POST'])
@@ -300,7 +327,6 @@ def executar_captacao_bbmnet():
         return jsonify({'erro': str(e)}), 500
 
 
-
 # CAPTACAO LICITAR DIGITAL (manual)
 @api_bp.route('/editais/captar-licitar', methods=['POST'])
 @jwt_required()
@@ -313,6 +339,26 @@ def executar_captacao_licitar_only():
         return jsonify({'sucesso': True, 'plataforma': 'licitardigital', **resultado}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
+
+
+# CAPTACAO COMPRAS.GOV.BR (manual)
+@api_bp.route('/editais/captar-comprasgov', methods=['POST'])
+@jwt_required()
+def executar_captacao_comprasgov_endpoint():
+    data = request.get_json() or {}
+    try:
+        from ..services.comprasgov_integration import executar_captacao_comprasgov
+        resultado = executar_captacao_comprasgov(
+            app_config=current_app.config,
+            periodo_dias=data.get('periodo_dias', 7),
+            ufs=data.get('ufs'),
+            modalidade_ids=data.get('modalidades_comprasgov'),
+            incluir_legado=data.get('incluir_legado', False),
+        )
+        return jsonify({'sucesso': True, 'plataforma': 'comprasgov', **resultado}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
 
 # IMPORTACAO LICITAR DIGITAL (via script local)
 @api_bp.route('/editais/importar-licitar', methods=['POST'])
@@ -388,6 +434,7 @@ def importar_editais_licitar():
 
     return jsonify(stats), 200
 
+
 @api_bp.route('/editais/limpar-rejeitados', methods=['POST'])
 @jwt_required()
 def limpar_rejeitados():
@@ -406,6 +453,7 @@ def limpar_rejeitados():
     db.session.commit()
     current_app.logger.info(f'Limpeza: {total} editais rejeitados removidos')
     return jsonify({'removidos': total}), 200
+
 
 @api_bp.route('/scheduler/status', methods=['GET'])
 @jwt_required()
@@ -438,7 +486,7 @@ def extrair_itens_edital(edital_id):
     """Extrai itens do edital usando Claude AI"""
     service = CaptacaoService(current_app.config)
     resultado = service.extrair_itens_edital(edital_id)
-    
+
     if 'erro' in resultado:
         return jsonify(resultado), 400
     return jsonify(resultado)
@@ -450,13 +498,13 @@ def classificar_edital(edital_id):
     """Classifica relevância do edital via Claude AI"""
     data = request.get_json() or {}
     segmentos = data.get('segmentos', [])
-    
+
     if not segmentos:
         return jsonify({'error': 'Informe os segmentos de interesse'}), 400
-    
+
     service = CaptacaoService(current_app.config)
     resultado = service.classificar_edital(edital_id, segmentos)
-    
+
     return jsonify(resultado)
 
 
@@ -466,7 +514,7 @@ def resumir_edital(edital_id):
     """Gera resumo executivo do edital via Claude AI"""
     service = CaptacaoService(current_app.config)
     resultado = service.resumir_edital(edital_id)
-    
+
     if 'erro' in resultado:
         return jsonify(resultado), 400
     return jsonify(resultado)
@@ -481,19 +529,19 @@ def resumir_edital(edital_id):
 def listar_triagem():
     """Lista editais pendentes de triagem"""
     status = request.args.get('status', 'pendente')
-    
+
     query = db.session.query(Edital, Triagem).join(
         Triagem, Edital.id == Triagem.edital_id
     ).filter(Triagem.decisao == status)
-    
+
     query = query.order_by(Triagem.prioridade.desc(), Edital.data_publicacao.desc())
-    
+
     resultados = []
     for edital, triagem in query.all():
         item = edital.to_dict()
         item['triagem'] = triagem.to_dict()
         resultados.append(item)
-    
+
     return jsonify({'editais': resultados, 'total': len(resultados)})
 
 
@@ -503,25 +551,25 @@ def decidir_triagem(edital_id):
     """Registra decisão de triagem"""
     data = request.get_json()
     usuario_id = int(get_jwt_identity())
-    
+
     triagem = Triagem.query.filter_by(edital_id=edital_id).first()
     if not triagem:
         return jsonify({'error': 'Triagem não encontrada'}), 404
-    
+
     triagem.decisao = data.get('decisao', triagem.decisao)
     triagem.motivo_rejeicao = data.get('motivo_rejeicao')
     triagem.observacoes = data.get('observacoes')
     triagem.prioridade = data.get('prioridade', triagem.prioridade)
     triagem.usuario_triador_id = usuario_id
     triagem.data_triagem = datetime.now(timezone.utc)
-    
+
     # Atualizar status do edital
     edital = Edital.query.get(edital_id)
     if data.get('decisao') == 'aprovado':
         edital.status = 'aprovado'
     elif data.get('decisao') == 'rejeitado':
         edital.status = 'rejeitado'
-    
+
     db.session.commit()
     return jsonify(triagem.to_dict())
 
@@ -542,7 +590,7 @@ def listar_filtros():
 def criar_filtro():
     data = request.get_json()
     usuario_id = int(get_jwt_identity())
-    
+
     filtro = FiltroProspeccao(
         nome=data['nome'],
         palavras_chave=data.get('palavras_chave', []),
@@ -554,7 +602,7 @@ def criar_filtro():
         ativo=True,
         usuario_id=usuario_id
     )
-    
+
     db.session.add(filtro)
     db.session.commit()
     return jsonify(filtro.to_dict()), 201
@@ -569,7 +617,7 @@ def criar_filtro():
 def listar_fornecedores():
     busca = request.args.get('busca')
     query = Fornecedor.query.filter_by(ativo=True)
-    
+
     if busca:
         query = query.filter(
             db.or_(
@@ -578,7 +626,7 @@ def listar_fornecedores():
                 Fornecedor.cnpj.ilike(f'%{busca}%')
             )
         )
-    
+
     fornecedores = query.order_by(Fornecedor.razao_social).all()
     return jsonify([f.to_dict() for f in fornecedores])
 
@@ -587,10 +635,10 @@ def listar_fornecedores():
 @jwt_required()
 def criar_fornecedor():
     data = request.get_json()
-    
+
     if Fornecedor.query.filter_by(cnpj=data.get('cnpj')).first():
         return jsonify({'error': 'CNPJ já cadastrado'}), 409
-    
+
     fornecedor = Fornecedor(
         razao_social=data['razao_social'],
         nome_fantasia=data.get('nome_fantasia'),
@@ -601,7 +649,7 @@ def criar_fornecedor():
         segmentos=data.get('segmentos', []),
         observacoes=data.get('observacoes')
     )
-    
+
     db.session.add(fornecedor)
     db.session.commit()
     return jsonify(fornecedor.to_dict()), 201
@@ -612,12 +660,12 @@ def criar_fornecedor():
 def atualizar_fornecedor(id):
     fornecedor = Fornecedor.query.get_or_404(id)
     data = request.get_json()
-    
-    for campo in ['razao_social', 'nome_fantasia', 'email', 'telefone', 
+
+    for campo in ['razao_social', 'nome_fantasia', 'email', 'telefone',
                    'contato_nome', 'segmentos', 'observacoes', 'ativo']:
         if campo in data:
             setattr(fornecedor, campo, data[campo])
-    
+
     db.session.commit()
     return jsonify(fornecedor.to_dict())
 
@@ -631,16 +679,16 @@ def atualizar_fornecedor(id):
 def listar_processos():
     status = request.args.get('status')
     cotador_id = request.args.get('cotador_id', type=int)
-    
+
     query = Processo.query
     if status:
         query = query.filter(Processo.status == status)
     if cotador_id:
         query = query.filter(Processo.cotador_id == cotador_id)
-    
+
     query = query.order_by(Processo.prioridade.desc(), Processo.data_limite.asc().nullslast())
     processos = query.all()
-    
+
     return jsonify([p.to_dict() for p in processos])
 
 
@@ -649,21 +697,21 @@ def listar_processos():
 def criar_processo():
     """Cria processo a partir de um edital aprovado"""
     data = request.get_json()
-    
+
     edital = Edital.query.get_or_404(data['edital_id'])
-    
-    # Gerar nome da pasta: PE 001/2025 - Proc 123 - Objeto - Data
+
+    # Gerar nome da pasta
     data_certame_str = ''
     if edital.data_certame:
         data_certame_str = edital.data_certame.strftime('%d/%m/%Y')
-    
+
     nome_pasta = (
         f"{edital.modalidade_nome or 'PE'} {edital.numero_pregao or ''} - "
         f"Proc {edital.numero_processo or ''} - "
         f"{(edital.objeto_resumo or '')[:80]} - "
         f"{data_certame_str}"
     ).strip(' -')
-    
+
     processo = Processo(
         edital_id=edital.id,
         empresa_id=data.get('empresa_id'),
@@ -676,32 +724,28 @@ def criar_processo():
         prioridade=data.get('prioridade', 'media'),
         observacoes=data.get('observacoes')
     )
-    
+
     db.session.add(processo)
     edital.status = 'em_cotacao'
     db.session.commit()
-    
+
     return jsonify(processo.to_dict()), 201
 
 
 @api_bp.route('/processos/<int:processo_id>/importar-itens-ai', methods=['POST'])
 @jwt_required()
 def importar_itens_ai(processo_id):
-    """
-    Importa itens extraídos via AI para o processo de cotação.
-    Move itens de ItemEditalExtraido → ItemEdital
-    """
+    """Importa itens extraídos via AI para o processo de cotação."""
     processo = Processo.query.get_or_404(processo_id)
     edital = processo.edital
-    
+
     itens_extraidos = edital.itens_extraidos.filter_by(revisado=True).all()
     if not itens_extraidos:
-        # Se não há itens revisados, usar todos
         itens_extraidos = edital.itens_extraidos.all()
-    
+
     if not itens_extraidos:
         return jsonify({'error': 'Nenhum item extraído encontrado. Execute a extração AI primeiro.'}), 400
-    
+
     importados = 0
     for item_ai in itens_extraidos:
         item = ItemEdital(
@@ -718,10 +762,10 @@ def importar_itens_ai(processo_id):
         )
         db.session.add(item)
         importados += 1
-    
+
     processo.status = 'em_cotacao'
     db.session.commit()
-    
+
     return jsonify({
         'mensagem': f'{importados} itens importados para cotação',
         'itens_importados': importados
@@ -735,37 +779,33 @@ def importar_itens_ai(processo_id):
 @api_bp.route('/processos/<int:processo_id>/analisar-viabilidade', methods=['POST'])
 @jwt_required()
 def analisar_viabilidade(processo_id):
-    """
-    Executa análise de viabilidade automática para todos os itens do processo.
-    Compara melhor preço de fornecedor + margem vs preço máximo.
-    """
+    """Executa análise de viabilidade automática para todos os itens do processo."""
     processo = Processo.query.get_or_404(processo_id)
     margem = float(processo.margem_minima or 15)
-    
+
     itens = processo.itens.all()
     resultados = {'aprovados': 0, 'reprovados': 0, 'sem_cotacao': 0, 'total': len(itens)}
-    
+
     for item in itens:
         cotacoes = item.cotacoes.all()
-        
+
         if not cotacoes:
             item.status = 'sem_cotacao'
             resultados['sem_cotacao'] += 1
             continue
-        
-        # Encontrar melhor preço
+
         melhor = min(cotacoes, key=lambda c: float(c.preco_unitario))
         custo = float(melhor.preco_unitario)
         preco_venda = custo * (1 + margem / 100)
         preco_max = float(item.preco_unitario_maximo or 0)
-        
+
         item.melhor_custo = custo
         item.preco_venda = preco_venda
         item.fornecedor_selecionado_id = melhor.fornecedor_id
-        
+
         if preco_max > 0:
             item.margem_real = ((preco_max / custo) - 1) * 100
-            
+
             if preco_venda <= preco_max:
                 item.status = 'aprovado'
                 resultados['aprovados'] += 1
@@ -774,17 +814,16 @@ def analisar_viabilidade(processo_id):
                 resultados['reprovados'] += 1
         else:
             item.status = 'pendente'
-    
-    # Calcular valor total estimado
+
     valor_total = sum(
         float(i.preco_venda or 0) * float(i.quantidade or 0)
         for i in itens if i.status == 'aprovado'
     )
     resultados['valor_total_estimado'] = valor_total
-    
+
     processo.status = 'em_analise'
     db.session.commit()
-    
+
     return jsonify(resultados)
 
 
@@ -817,17 +856,19 @@ def dashboard_stats():
         'plataforma_origem': e.plataforma_origem,
         'data_publicacao': e.data_publicacao.isoformat() if e.data_publicacao else None,
     } for e in recentes]
-    # Ultima captacao por plataforma (usa created_at = quando foi salvo no SGL)
+
+    # Ultima captacao por plataforma
     ultimas_captacoes = {}
-    for plat in ['pncp', 'bbmnet', 'licitardigital']:
+    for plat in ['pncp', 'bbmnet', 'licitardigital', 'comprasgov']:
         ultimo = Edital.query.filter_by(plataforma_origem=plat).order_by(Edital.id.desc()).first()
         if ultimo and ultimo.created_at:
             ultimas_captacoes[plat] = ultimo.created_at.isoformat()
         else:
             ultimas_captacoes[plat] = None
+
     # Contar por plataforma
     por_plataforma = {}
-    for plat in ['pncp', 'bbmnet', 'licitardigital']:
+    for plat in ['pncp', 'bbmnet', 'licitardigital', 'comprasgov']:
         por_plataforma[plat] = Edital.query.filter_by(plataforma_origem=plat).count()
 
     return jsonify({
