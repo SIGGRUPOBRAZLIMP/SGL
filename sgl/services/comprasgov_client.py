@@ -57,13 +57,14 @@ MODOS_DISPUTA = {
 class ComprasGovClient:
     """Client para API de Dados Abertos do Compras.gov.br"""
 
-    def __init__(self, timeout=60, delay=0.3):
+    def __init__(self, timeout=25, max_retries=2, delay=0.3):
         self.session = requests.Session()
         self.session.headers.update({
             "Accept": "application/json",
             "User-Agent": "SGL-CaptacaoEditais/1.0",
         })
         self.timeout = timeout
+        self.max_retries = max_retries
         self.delay = delay
         self._last_request = 0
 
@@ -77,7 +78,7 @@ class ComprasGovClient:
         """GET genérico com rate limit e retry"""
         self._rate_limit()
         url = f"{BASE_URL}{path}"
-        for attempt in range(3):
+        for attempt in range(self.max_retries):
             try:
                 resp = self.session.get(url, params=params, timeout=self.timeout)
                 if resp.status_code == 200:
@@ -94,9 +95,12 @@ class ComprasGovClient:
                     )
                     return None
             except requests.exceptions.Timeout:
-                logger.warning("Timeout tentativa %d/3 para %s", attempt + 1, path)
-                if attempt < 2:
-                    time.sleep(2)
+                logger.warning(
+                    "Timeout tentativa %d/%d para %s",
+                    attempt + 1, self.max_retries, path,
+                )
+                if attempt < self.max_retries - 1:
+                    time.sleep(1)
             except Exception as e:
                 logger.error("Erro ComprasGov: %s", e)
                 return None
@@ -211,7 +215,7 @@ class ComprasGovClient:
         return self._get("/modulo-legado/3_consultarPregoes", params)
 
     # ================================================================
-    # BUSCA PAGINADA COMPLETA
+    # BUSCA PAGINADA COMPLETA (com orçamento de tempo)
     # ================================================================
 
     def buscar_todas_contratacoes(
@@ -221,6 +225,7 @@ class ComprasGovClient:
         modalidades=None,
         ufs=None,
         max_paginas=20,
+        tempo_maximo_seg=90,
     ):
         """
         Busca completa com paginação, iterando por Modalidade × UF.
@@ -228,23 +233,50 @@ class ComprasGovClient:
         codigoModalidade é OBRIGATÓRIO, então iteramos por modalidade.
         UF é opcional.
 
+        Inclui orçamento de tempo (tempo_maximo_seg) para não estourar
+        o timeout do Gunicorn (~120s no Render).
+
         Args:
             data_inicio: str YYYY-MM-DD
             data_fim: str YYYY-MM-DD
             modalidades: list[int] IDs de modalidade
             ufs: list[str] UFs a buscar (None = todas)
             max_paginas: int máximo de páginas por combinação
+            tempo_maximo_seg: int tempo máximo total em segundos
         """
         if modalidades is None:
             modalidades = [4, 6, 7, 8, 12]
 
         uf_list = ufs if ufs else [None]
         todas = []
+        inicio_exec = time.time()
+        abortado = False
 
         for uf in uf_list:
+            if abortado:
+                break
             for mod_id in modalidades:
+                # Checar orçamento de tempo antes de cada modalidade
+                elapsed = time.time() - inicio_exec
+                if elapsed >= tempo_maximo_seg:
+                    logger.warning(
+                        "ComprasGov: orçamento de tempo esgotado (%.0fs). "
+                        "Captados %d registros até agora.",
+                        elapsed, len(todas),
+                    )
+                    abortado = True
+                    break
+
                 pagina = 1
                 while pagina <= max_paginas:
+                    # Checar orçamento antes de cada página
+                    if (time.time() - inicio_exec) >= tempo_maximo_seg:
+                        logger.warning(
+                            "ComprasGov: orçamento de tempo esgotado durante paginação."
+                        )
+                        abortado = True
+                        break
+
                     resultado = self.consultar_contratacoes_14133(
                         data_publicacao_inicio=data_inicio,
                         data_publicacao_fim=data_fim,
@@ -272,7 +304,12 @@ class ComprasGovClient:
                         break
                     pagina += 1
 
-        logger.info("ComprasGov: total bruto = %d contratações", len(todas))
+        elapsed_total = time.time() - inicio_exec
+        logger.info(
+            "ComprasGov: total bruto = %d contratações em %.1fs%s",
+            len(todas), elapsed_total,
+            " (parcial - tempo esgotado)" if abortado else "",
+        )
         return todas
 
     def buscar_licitacoes_legado_completo(

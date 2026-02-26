@@ -1,9 +1,10 @@
 """
-SGL - Integração Compras.gov.br (CORRIGIDO)
+SGL - Integração Compras.gov.br
 
 Mudanças vs versão anterior:
 - Formato de data: YYYY-MM-DD (não mais YYYYMMDD)
 - Endpoints corretos do Swagger
+- Client com timeout reduzido (25s) e orçamento de tempo (90s)
 """
 import logging
 import os
