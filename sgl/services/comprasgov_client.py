@@ -3,11 +3,17 @@ SGL - Client para API Compras.gov.br (Dados Abertos)
 
 API pública, sem autenticação.
 Documentação: https://dadosabertos.compras.gov.br/swagger-ui/index.html
-Manual: https://www.gov.br/compras/pt-br/acesso-a-informacao/manuais/manual-dados-abertos/manual-api-compras.pdf
 
-Dois módulos relevantes:
-  - Módulo Contratações (Lei 14.133/2021): /modulo-contratacao/
-  - Módulo Legado (Lei 8.666/1993): /modulo-legado/
+Endpoints CORRETOS (verificados via /v3/api-docs em 26/02/2026):
+  - /modulo-contratacoes/1_consultarContratacoes_PNCP_14133  (Lei 14.133/2021)
+  - /modulo-legado/1_consultarLicitacao                       (Lei 8.666/1993)
+  - /modulo-legado/3_consultarPregoes                         (Pregões legado)
+
+Parâmetros OBRIGATÓRIOS:
+  - Contratações: dataPublicacaoPncpInicial, dataPublicacaoPncpFinal, codigoModalidade
+  - Legado Licitação: data_publicacao_inicial, data_publicacao_final
+  - Legado Pregão: dt_data_edital_inicial, dt_data_edital_final
+  - Formato de data: YYYY-MM-DD
 
 Autor: SGL Team
 """
@@ -24,7 +30,6 @@ BASE_URL = "https://dadosabertos.compras.gov.br"
 
 # Mapeamento de modalidades Compras.gov.br → nome legível
 MODALIDADES_COMPRASGOV = {
-    # Lei 14.133/2021 (Módulo Contratações)
     1: "Leilão - Eletrônico",
     2: "Diálogo Competitivo",
     3: "Concurso",
@@ -40,7 +45,6 @@ MODALIDADES_COMPRASGOV = {
     13: "Leilão - Presencial",
 }
 
-# Modos de disputa
 MODOS_DISPUTA = {
     1: "Aberto",
     2: "Fechado",
@@ -84,7 +88,10 @@ class ComprasGovClient:
                     time.sleep(wait)
                     continue
                 else:
-                    logger.error("ComprasGov HTTP %d: %s", resp.status_code, resp.text[:200])
+                    logger.error(
+                        "ComprasGov HTTP %d para %s params=%s: %s",
+                        resp.status_code, path, params, resp.text[:300],
+                    )
                     return None
             except requests.exceptions.Timeout:
                 logger.warning("Timeout tentativa %d/3 para %s", attempt + 1, path)
@@ -97,66 +104,52 @@ class ComprasGovClient:
 
     # ================================================================
     # MÓDULO CONTRATAÇÕES - Lei 14.133/2021
+    # Path: /modulo-contratacoes/1_consultarContratacoes_PNCP_14133
     # ================================================================
 
     def consultar_contratacoes_14133(
         self,
-        data_publicacao_inicio=None,
-        data_publicacao_fim=None,
-        modalidade_id=None,
+        data_publicacao_inicio,
+        data_publicacao_fim,
+        codigo_modalidade,
         uf=None,
         orgao_cnpj=None,
+        codigo_ibge=None,
         pagina=1,
-        tamanho_pagina=50,
+        tamanho_pagina=500,
     ):
         """
         Consulta contratações pela nova lei (14.133/2021).
 
-        Endpoint: /modulo-contratacao/1_consultarContratacao
-        Sem autenticação.
+        Parâmetros OBRIGATÓRIOS pela API:
+            data_publicacao_inicio: str formato YYYY-MM-DD
+            data_publicacao_fim: str formato YYYY-MM-DD
+            codigo_modalidade: int (1-13, ver MODALIDADES_COMPRASGOV)
 
-        Parâmetros:
-            data_publicacao_inicio: str formato YYYYMMDD
-            data_publicacao_fim: str formato YYYYMMDD
-            modalidade_id: int (1-13, ver MODALIDADES_COMPRASGOV)
-            uf: str (sigla UF, ex: "RJ")
+        Parâmetros opcionais:
+            uf: str (sigla UF, ex: "RJ") → unidadeOrgaoUfSigla
             orgao_cnpj: str (CNPJ do órgão)
-            pagina: int
-            tamanho_pagina: int (max 500)
+            codigo_ibge: int (código IBGE do município)
         """
-        params = {"pagina": pagina}
-        if tamanho_pagina:
-            params["tamanhoPagina"] = min(tamanho_pagina, 500)
-        if data_publicacao_inicio:
-            params["dataPublicacaoInicio"] = data_publicacao_inicio
-        if data_publicacao_fim:
-            params["dataPublicacaoFim"] = data_publicacao_fim
-        if modalidade_id:
-            params["modalidadeId"] = modalidade_id
+        params = {
+            "pagina": pagina,
+            "tamanhoPagina": min(tamanho_pagina, 500),
+            # Obrigatórios
+            "dataPublicacaoPncpInicial": data_publicacao_inicio,
+            "dataPublicacaoPncpFinal": data_publicacao_fim,
+            "codigoModalidade": codigo_modalidade,
+        }
         if uf:
-            params["uf"] = uf
+            params["unidadeOrgaoUfSigla"] = uf
         if orgao_cnpj:
             params["orgaoEntidadeCnpj"] = orgao_cnpj
+        if codigo_ibge:
+            params["unidadeOrgaoCodigoIbge"] = codigo_ibge
 
-        return self._get("/modulo-contratacao/1_consultarContratacao", params)
-
-    def consultar_itens_contratacao_14133(
-        self,
-        numero_compra=None,
-        ano_compra=None,
-        codigo_uasg=None,
-        pagina=1,
-    ):
-        """Consulta itens de uma contratação específica"""
-        params = {"pagina": pagina}
-        if numero_compra:
-            params["numeroCompra"] = numero_compra
-        if ano_compra:
-            params["anoCompra"] = ano_compra
-        if codigo_uasg:
-            params["codigoUasg"] = codigo_uasg
-
-        return self._get("/modulo-contratacao/2_consultarItemContratacao", params)
+        return self._get(
+            "/modulo-contratacoes/1_consultarContratacoes_PNCP_14133",
+            params,
+        )
 
     # ================================================================
     # MÓDULO LEGADO - Lei 8.666/1993
@@ -164,50 +157,58 @@ class ComprasGovClient:
 
     def consultar_licitacoes_legado(
         self,
-        uf=None,
+        data_publicacao_inicial,
+        data_publicacao_final,
         modalidade=None,
-        data_abertura_inicio=None,
-        data_abertura_fim=None,
+        uasg=None,
         pagina=1,
+        tamanho_pagina=500,
     ):
         """
-        Consulta licitações pelo módulo legado (leis anteriores à 14.133).
+        Consulta licitações pelo módulo legado.
 
-        Endpoint: /modulo-legado/1_consultarLicitacao
+        Parâmetros OBRIGATÓRIOS:
+            data_publicacao_inicial: str formato YYYY-MM-DD
+            data_publicacao_final: str formato YYYY-MM-DD
         """
-        params = {"pagina": pagina}
-        if uf:
-            params["uf"] = uf
+        params = {
+            "pagina": pagina,
+            "tamanhoPagina": min(tamanho_pagina, 500),
+            "data_publicacao_inicial": data_publicacao_inicial,
+            "data_publicacao_final": data_publicacao_final,
+        }
         if modalidade:
             params["modalidade"] = modalidade
-        if data_abertura_inicio:
-            params["dataAberturaInicio"] = data_abertura_inicio
-        if data_abertura_fim:
-            params["dataAberturaFim"] = data_abertura_fim
+        if uasg:
+            params["uasg"] = uasg
 
         return self._get("/modulo-legado/1_consultarLicitacao", params)
 
     def consultar_pregoes_legado(
         self,
-        uf=None,
-        data_abertura_inicio=None,
-        data_abertura_fim=None,
+        data_edital_inicial,
+        data_edital_final,
+        co_uasg=None,
         pagina=1,
+        tamanho_pagina=500,
     ):
         """
         Consulta pregões pelo módulo legado.
 
-        Endpoint: /modulo-legado/3_consultarPregao
+        Parâmetros OBRIGATÓRIOS:
+            data_edital_inicial: str formato YYYY-MM-DD
+            data_edital_final: str formato YYYY-MM-DD
         """
-        params = {"pagina": pagina}
-        if uf:
-            params["uf"] = uf
-        if data_abertura_inicio:
-            params["dataAberturaInicio"] = data_abertura_inicio
-        if data_abertura_fim:
-            params["dataAberturaFim"] = data_abertura_fim
+        params = {
+            "pagina": pagina,
+            "tamanhoPagina": min(tamanho_pagina, 500),
+            "dt_data_edital_inicial": data_edital_inicial,
+            "dt_data_edital_final": data_edital_final,
+        }
+        if co_uasg:
+            params["co_uasg"] = co_uasg
 
-        return self._get("/modulo-legado/3_consultarPregao", params)
+        return self._get("/modulo-legado/3_consultarPregoes", params)
 
     # ================================================================
     # BUSCA PAGINADA COMPLETA
@@ -222,34 +223,32 @@ class ComprasGovClient:
         max_paginas=20,
     ):
         """
-        Busca completa com paginação, iterando por UF × Modalidade.
+        Busca completa com paginação, iterando por Modalidade × UF.
+
+        codigoModalidade é OBRIGATÓRIO, então iteramos por modalidade.
+        UF é opcional.
 
         Args:
-            data_inicio: str YYYYMMDD
-            data_fim: str YYYYMMDD
-            modalidades: list[int] IDs de modalidade (default: todas principais)
-            ufs: list[str] UFs a buscar
+            data_inicio: str YYYY-MM-DD
+            data_fim: str YYYY-MM-DD
+            modalidades: list[int] IDs de modalidade
+            ufs: list[str] UFs a buscar (None = todas)
             max_paginas: int máximo de páginas por combinação
-
-        Returns:
-            list[dict] contratações brutas da API
         """
         if modalidades is None:
-            modalidades = [4, 6, 7, 8, 12]  # Concorrência E, Pregão E/P, Dispensa, Credenciamento
-        if ufs is None:
-            ufs = ["RJ", "SP", "MG", "ES"]
+            modalidades = [4, 6, 7, 8, 12]
 
+        uf_list = ufs if ufs else [None]
         todas = []
-        total_api = 0
 
-        for uf in ufs:
+        for uf in uf_list:
             for mod_id in modalidades:
                 pagina = 1
                 while pagina <= max_paginas:
                     resultado = self.consultar_contratacoes_14133(
                         data_publicacao_inicio=data_inicio,
                         data_publicacao_fim=data_fim,
-                        modalidade_id=mod_id,
+                        codigo_modalidade=mod_id,
                         uf=uf,
                         pagina=pagina,
                         tamanho_pagina=500,
@@ -264,9 +263,8 @@ class ComprasGovClient:
 
                     if registros:
                         todas.extend(registros)
-                        total_api += len(registros)
                         logger.info(
-                            "ComprasGov: UF=%s MOD=%d pag=%d → %d registros (total API: %d)",
+                            "ComprasGov: UF=%s MOD=%d pag=%d → %d reg (total=%d)",
                             uf, mod_id, pagina, len(registros), total_reg,
                         )
 
@@ -274,7 +272,7 @@ class ComprasGovClient:
                         break
                     pagina += 1
 
-        logger.info("ComprasGov: total bruto captado = %d contratações", len(todas))
+        logger.info("ComprasGov: total bruto = %d contratações", len(todas))
         return todas
 
     def buscar_licitacoes_legado_completo(
@@ -284,36 +282,31 @@ class ComprasGovClient:
         ufs=None,
         max_paginas=10,
     ):
-        """Busca licitações do módulo legado (Lei 8.666) com paginação."""
-        if ufs is None:
-            ufs = ["RJ", "SP", "MG", "ES"]
-
+        """Busca licitações do módulo legado com paginação."""
         todas = []
-        for uf in ufs:
-            pagina = 1
-            while pagina <= max_paginas:
-                resultado = self.consultar_licitacoes_legado(
-                    uf=uf,
-                    data_abertura_inicio=data_inicio,
-                    data_abertura_fim=data_fim,
-                    pagina=pagina,
+        pagina = 1
+        while pagina <= max_paginas:
+            resultado = self.consultar_licitacoes_legado(
+                data_publicacao_inicial=data_inicio,
+                data_publicacao_final=data_fim,
+                pagina=pagina,
+            )
+            if not resultado:
+                break
+
+            registros = resultado.get("resultado", [])
+            paginas_rest = resultado.get("paginasRestantes", 0)
+
+            if registros:
+                todas.extend(registros)
+                logger.info(
+                    "ComprasGov Legado: pag=%d → %d registros",
+                    pagina, len(registros),
                 )
-                if not resultado:
-                    break
 
-                registros = resultado.get("resultado", [])
-                paginas_rest = resultado.get("paginasRestantes", 0)
-
-                if registros:
-                    todas.extend(registros)
-                    logger.info(
-                        "ComprasGov Legado: UF=%s pag=%d → %d registros",
-                        uf, pagina, len(registros),
-                    )
-
-                if paginas_rest <= 0 or not registros:
-                    break
-                pagina += 1
+            if paginas_rest <= 0 or not registros:
+                break
+            pagina += 1
 
         logger.info("ComprasGov Legado: total bruto = %d licitações", len(todas))
         return todas
@@ -325,42 +318,28 @@ class ComprasGovClient:
 
 def converter_contratacao_14133_para_sgl(contratacao):
     """
-    Converte uma contratação do módulo 14.133 para o formato de edital SGL.
-
-    Campos esperados da API (baseado no Swagger):
-        - numeroCompra, anoCompra
-        - orgaoEntidadeCnpj, orgaoEntidadeRazaoSocial
-        - unidadeOrgaoCodigoUasg, unidadeOrgaoNomeUnidade
-        - objetoCompra
-        - modalidadeId, modalidadeNome
-        - modoDisputaId, modoDisputaNome
-        - dataPublicacao, dataAberturaProposta, dataEncerramentoProposta
-        - situacaoCompra (ex: "Aberta", "Publicada", "Homologada", etc.)
-        - ufSigla, municipioNome
-        - valorEstimado, srp (boolean)
-        - linkSistemaOrigem, linkPncp
+    Converte contratação (schema VwFtPNCPCompra) para formato SGL.
     """
     numero = contratacao.get("numeroCompra", "")
-    ano = contratacao.get("anoCompra", "")
+    ano = contratacao.get("anoCompraPncp", "")
     cnpj = contratacao.get("orgaoEntidadeCnpj", "")
-    uasg = contratacao.get("unidadeOrgaoCodigoUasg", "")
+    uasg = contratacao.get("unidadeOrgaoCodigoUnidade", "")
 
-    # Hash único para dedup
     hash_str = f"comprasgov:{cnpj}:{uasg}:{numero}:{ano}"
     hash_scraper = hashlib.md5(hash_str.encode()).hexdigest()
 
-    modalidade_id = contratacao.get("modalidadeId")
-    modalidade_nome = contratacao.get("modalidadeNome") or MODALIDADES_COMPRASGOV.get(modalidade_id, f"Modalidade {modalidade_id}")
+    modalidade_id = contratacao.get("codigoModalidade") or contratacao.get("modalidadeIdPncp")
+    modalidade_nome = (
+        contratacao.get("modalidadeNome")
+        or MODALIDADES_COMPRASGOV.get(modalidade_id, f"Modalidade {modalidade_id}")
+    )
 
-    uf = contratacao.get("ufSigla", "")
-    municipio = contratacao.get("municipioNome", "")
+    uf = contratacao.get("unidadeOrgaoUfSigla", "")
+    municipio = contratacao.get("unidadeOrgaoMunicipioNome", "")
 
-    # URLs
-    link_pncp = contratacao.get("linkPncp", "")
-    link_sistema = contratacao.get("linkSistemaOrigem", "")
-    url_principal = link_pncp or link_sistema or ""
+    numero_controle = contratacao.get("numeroControlePNCP", "")
+    link_pncp = f"https://pncp.gov.br/app/editais/{numero_controle}" if numero_controle else ""
 
-    # SRP
     srp = contratacao.get("srp", False)
     objeto = contratacao.get("objetoCompra", "") or ""
     if not srp and "registro de pre" in objeto.lower():
@@ -371,7 +350,7 @@ def converter_contratacao_14133_para_sgl(contratacao):
     return {
         "hash_scraper": hash_scraper,
         "numero_pregao": numero_display,
-        "numero_processo": contratacao.get("processoCompra", numero_display),
+        "numero_processo": contratacao.get("processo", numero_display),
         "orgao_cnpj": cnpj,
         "orgao_razao_social": contratacao.get("orgaoEntidadeRazaoSocial", ""),
         "unidade_nome": contratacao.get("unidadeOrgaoNomeUnidade", ""),
@@ -382,62 +361,54 @@ def converter_contratacao_14133_para_sgl(contratacao):
         "modalidade_nome": modalidade_nome,
         "modalidade_id_comprasgov": modalidade_id,
         "srp": srp,
-        "data_publicacao": contratacao.get("dataPublicacao"),
-        "data_abertura_proposta": contratacao.get("dataAberturaProposta"),
-        "data_encerramento_proposta": contratacao.get("dataEncerramentoProposta"),
-        "valor_estimado": contratacao.get("valorEstimado"),
+        "data_publicacao": contratacao.get("dataPublicacaoPncp"),
+        "data_abertura_proposta": contratacao.get("dataAberturaPropostaPncp"),
+        "data_encerramento_proposta": contratacao.get("dataEncerramentoPropostaPncp"),
+        "valor_estimado": contratacao.get("valorTotalEstimado"),
         "plataforma_origem": "comprasgov",
-        "url_original": url_principal,
-        "link_sistema_origem": link_sistema,
+        "url_original": link_pncp,
+        "link_sistema_origem": "",
         "link_pncp": link_pncp,
-        "situacao_pncp": contratacao.get("situacaoCompra", ""),
+        "situacao_pncp": contratacao.get("situacaoCompraNomePncp", ""),
         "status": "captado",
     }
 
 
 def converter_licitacao_legado_para_sgl(licitacao):
     """
-    Converte licitação do módulo legado (8.666) para formato SGL.
-
-    Campos esperados da API:
-        - licitacaoId, numPregao, numProcesso
-        - uasgNome, uasgCodigo
-        - objetoLicitacao
-        - modalidadeLicitacao
-        - dataAbertura, dataPublicacao
-        - situacao
-        - ufSigla
+    Converte licitação legado (schema TbVwLicitacaoDTO) para formato SGL.
     """
-    lic_id = licitacao.get("licitacaoId", "")
-    num_pregao = licitacao.get("numPregao", "")
-    num_processo = licitacao.get("numProcesso", "")
-    uasg = licitacao.get("uasgCodigo", "")
+    id_compra = licitacao.get("id_compra", "")
+    num_aviso = licitacao.get("numero_aviso", "")
+    num_processo = licitacao.get("numero_processo", "")
+    uasg = licitacao.get("uasg", "")
 
-    hash_str = f"comprasgovlegado:{lic_id}:{uasg}:{num_pregao}"
+    hash_str = f"comprasgovlegado:{id_compra}:{uasg}:{num_aviso}"
     hash_scraper = hashlib.md5(hash_str.encode()).hexdigest()
 
-    objeto = licitacao.get("objetoLicitacao", "") or ""
+    objeto = licitacao.get("objeto", "") or ""
     srp = "registro de pre" in objeto.lower()
 
     return {
         "hash_scraper": hash_scraper,
-        "numero_pregao": num_pregao,
+        "numero_pregao": str(num_aviso) if num_aviso else "",
         "numero_processo": num_processo,
         "orgao_cnpj": None,
-        "orgao_razao_social": licitacao.get("uasgNome", ""),
-        "unidade_nome": licitacao.get("uasgNome", ""),
-        "uf": licitacao.get("ufSigla", ""),
+        "orgao_razao_social": "",
+        "unidade_nome": "",
+        "uf": "",
         "municipio": "",
         "objeto_resumo": objeto[:500],
         "objeto_completo": objeto,
-        "modalidade_nome": licitacao.get("modalidadeLicitacao", ""),
+        "modalidade_nome": licitacao.get("nome_modalidade", ""),
         "srp": srp,
-        "data_publicacao": licitacao.get("dataPublicacao"),
-        "data_abertura_proposta": licitacao.get("dataAbertura"),
+        "data_publicacao": licitacao.get("data_publicacao"),
+        "data_abertura_proposta": licitacao.get("data_abertura_proposta"),
         "data_encerramento_proposta": None,
+        "valor_estimado": licitacao.get("valor_estimado_total"),
         "plataforma_origem": "comprasgov_legado",
-        "url_original": f"https://www.gov.br/compras/pt-br/acesso-a-informacao/consulta-detalhada",
+        "url_original": "",
         "link_sistema_origem": "",
-        "situacao_pncp": licitacao.get("situacao", ""),
+        "situacao_pncp": licitacao.get("situacao_aviso", ""),
         "status": "captado",
     }

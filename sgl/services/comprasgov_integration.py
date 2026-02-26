@@ -1,12 +1,9 @@
 """
-SGL - Integração Compras.gov.br
+SGL - Integração Compras.gov.br (CORRIGIDO)
 
-Camada de integração que:
-1. Busca contratações na API pública
-2. Converte para formato SGL
-3. Retorna resultado padronizado para o routes.py
-
-Similar a bbmnet_integration.py
+Mudanças vs versão anterior:
+- Formato de data: YYYY-MM-DD (não mais YYYYMMDD)
+- Endpoints corretos do Swagger
 """
 import logging
 import os
@@ -32,7 +29,7 @@ def executar_captacao_comprasgov(
     Executa captação completa do Compras.gov.br.
 
     Args:
-        app_config: Flask app config (não usado, mas mantém interface consistente)
+        app_config: Flask app config (não usado, mantém interface consistente)
         periodo_dias: int dias para trás
         ufs: list[str] UFs para buscar
         modalidade_ids: list[int] IDs de modalidade (Lei 14.133)
@@ -55,21 +52,24 @@ def executar_captacao_comprasgov(
         if periodo_dias is None:
             periodo_dias = int(os.environ.get("CAPTACAO_PERIODO_DIAS_DEFAULT", "7"))
         if ufs is None:
-            env_ufs = os.environ.get("COMPRASGOV_UFS_DEFAULT", os.environ.get("PNCP_UFS_DEFAULT", "RJ,SP,MG,ES"))
+            env_ufs = os.environ.get(
+                "COMPRASGOV_UFS_DEFAULT",
+                os.environ.get("PNCP_UFS_DEFAULT", "RJ,SP,MG,ES"),
+            )
             ufs = [u.strip() for u in env_ufs.split(",") if u.strip()]
         if modalidade_ids is None:
             env_mod = os.environ.get("COMPRASGOV_MODALIDADES_DEFAULT", "4,6,7,8,12")
             modalidade_ids = [int(m.strip()) for m in env_mod.split(",") if m.strip()]
 
-        # Datas
+        # Datas no formato YYYY-MM-DD (obrigatório pela API)
         data_fim = datetime.now()
         data_inicio = data_fim - timedelta(days=periodo_dias)
-        data_inicio_str = data_inicio.strftime("%Y%m%d")
-        data_fim_str = data_fim.strftime("%Y%m%d")
+        data_inicio_str = data_inicio.strftime("%Y-%m-%d")
+        data_fim_str = data_fim.strftime("%Y-%m-%d")
 
         logger.info(
-            "ComprasGov: Iniciando captação período=%dd, UFs=%s, modalidades=%s",
-            periodo_dias, ufs, modalidade_ids,
+            "ComprasGov: Iniciando captação período=%s a %s, UFs=%s, modalidades=%s",
+            data_inicio_str, data_fim_str, ufs, modalidade_ids,
         )
 
         client = ComprasGovClient()
