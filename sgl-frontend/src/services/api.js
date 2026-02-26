@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 const API_URL = window.location.hostname.includes('onrender.com') ? 'https://sgl-api-xm64.onrender.com/api' : '/api'
 
@@ -33,6 +33,7 @@ export const captarEditais = (data) => api.post('/editais/captar', data)
 export const captarPNCP = (data) => api.post('/editais/captar-pncp', data)
 export const captarBBMNET = (data) => api.post('/editais/captar-bbmnet', data)
 export const captarLicitar = (data) => api.post('/editais/captar-licitar', data)
+export const captarComprasGov = (data) => api.post('/editais/captar-comprasgov', data)
 export const limparRejeitados = () => api.post('/editais/limpar-rejeitados')
 export const extrairItensAI = (id) => api.post('/editais/' + id + '/extrair-itens')
 export const classificarEdital = (id, segmentos) => api.post('/editais/' + id + '/classificar', { segmentos })
