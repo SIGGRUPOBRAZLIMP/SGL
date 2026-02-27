@@ -24,6 +24,7 @@ export default function Editais() {
     status: '',
     modalidade: '',
     uf: '',
+    plataforma: '',
     municipio: '',
     srp: '',
     data_pub_inicio: '',
@@ -54,6 +55,7 @@ export default function Editais() {
       if (filters.status) params.status = filters.status
       if (filters.modalidade) params.modalidade = filters.modalidade
       if (filters.uf) params.uf = filters.uf
+      if (filters.plataforma) params.plataforma = filters.plataforma
       if (filters.municipio) params.municipio = filters.municipio
       if (filters.srp) params.srp = filters.srp
       if (filters.data_pub_inicio) params.data_pub_inicio = filters.data_pub_inicio
@@ -91,7 +93,7 @@ export default function Editais() {
 
   const clearFilters = () => {
     setFilters({
-      busca: '', status: '', modalidade: '', uf: '', municipio: '', srp: '',
+      busca: '', status: '', modalidade: '', uf: '', plataforma: '', municipio: '', srp: '',
       data_pub_inicio: '', data_pub_fim: '', data_certame_inicio: '', data_certame_fim: '',
       valor_min: '', valor_max: '', com_arquivos: '', com_itens_ai: '',
       ordenar_por: 'data_publicacao', ordem: 'desc',
@@ -147,6 +149,15 @@ export default function Editais() {
             <select value={filters.uf} onChange={(e) => { handleFilterChange('uf', e.target.value); setPage(1); setTimeout(loadEditais, 0) }} className="input-field text-sm">
               <option value="">UF</option>
               {UFS.map(uf => <option key={uf} value={uf}>{uf}</option>)}
+            </select>
+          </div>
+          <div className="w-40">
+            <select value={filters.plataforma} onChange={(e) => { handleFilterChange('plataforma', e.target.value); setPage(1); setTimeout(loadEditais, 0) }} className="input-field text-sm">
+              <option value="">Plataforma</option>
+              <option value="pncp">PNCP</option>
+              <option value="bbmnet">BBMNET</option>
+              <option value="licitardigital">Licitar Digital</option>
+              <option value="comprasgov">ComprasGov</option>
             </select>
           </div>
 
@@ -323,6 +334,7 @@ export default function Editais() {
                   <th className="text-left py-3 px-4 text-gray-500 font-medium">Modalidade</th>
                   <ThSort label="Valor Est." campo="valor_estimado" current={filters} onSort={handleSort} align="right" />
                   <ThSort label="Status" campo="status" current={filters} onSort={handleSort} />
+                  <th className="text-left py-3 px-4 text-gray-500 font-medium">Origem</th>
                   <ThSort label="Publicação" campo="data_publicacao" current={filters} onSort={handleSort} />
                   <ThSort label="Certame" campo="data_certame" current={filters} onSort={handleSort} />
                   <th className="py-3 px-4"></th>
@@ -338,6 +350,7 @@ export default function Editais() {
                     <td className="py-3 px-4 text-gray-600 text-xs">{e.modalidade_nome || '—'}</td>
                     <td className="py-3 px-4 text-right font-medium">{formatCurrency(e.valor_estimado)}</td>
                     <td className="py-3 px-4"><StatusBadge status={e.status} /></td>
+                    <td className="py-3 px-4"><PlataformaBadge plataforma={e.plataforma_origem} /></td>
                     <td className="py-3 px-4 text-gray-400 text-xs">{formatDate(e.data_publicacao)}</td>
                     <td className="py-3 px-4 text-gray-400 text-xs">{formatDate(e.data_certame)}</td>
                     <td className="py-3 px-4">
@@ -378,5 +391,21 @@ function ThSort({ label, campo, current, onSort, align = 'left' }) {
         {isActive && (current.ordem === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
       </span>
     </th>
+  )
+}
+
+const PLATAFORMA_CONFIG = {
+  pncp:            { label: 'PNCP',     bg: 'bg-blue-100',   text: 'text-blue-700' },
+  bbmnet:          { label: 'BBMNET',   bg: 'bg-green-100',  text: 'text-green-700' },
+  licitardigital:  { label: 'Licitar',  bg: 'bg-purple-100', text: 'text-purple-700' },
+  comprasgov:      { label: 'ComprasGov', bg: 'bg-orange-100', text: 'text-orange-700' },
+}
+
+function PlataformaBadge({ plataforma }) {
+  const config = PLATAFORMA_CONFIG[plataforma] || { label: plataforma || '—', bg: 'bg-gray-100', text: 'text-gray-600' }
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${config.bg} ${config.text}`}>
+      {config.label}
+    </span>
   )
 }

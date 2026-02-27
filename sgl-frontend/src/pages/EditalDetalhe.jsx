@@ -98,6 +98,7 @@ export default function EditalDetalhe() {
               {edital.uf && <span><strong>UF:</strong> {edital.uf}</span>}
               {edital.municipio && <span><strong>Município:</strong> {edital.municipio}</span>}
               {edital.modalidade_nome && <span><strong>Modalidade:</strong> {edital.modalidade_nome}</span>}
+              {edital.plataforma_origem && <span><PlataformaBadge plataforma={edital.plataforma_origem} /></span>}
               {edital.srp !== null && <span><strong>SRP:</strong> {edital.srp ? 'Sim' : 'Não'}</span>}
             </div>
           </div>
@@ -228,4 +229,20 @@ function StatusBadge({ status }) {
     em_processo: 'bg-yellow-100 text-yellow-700',
   }
   return <span className={`badge mt-2 ${styles[status] || 'bg-gray-100 text-gray-700'}`}>{status || 'captado'}</span>
+}
+
+const PLATAFORMA_CONFIG = {
+  pncp:            { label: 'PNCP',     bg: 'bg-blue-100',   text: 'text-blue-700' },
+  bbmnet:          { label: 'BBMNET',   bg: 'bg-green-100',  text: 'text-green-700' },
+  licitardigital:  { label: 'Licitar Digital', bg: 'bg-purple-100', text: 'text-purple-700' },
+  comprasgov:      { label: 'ComprasGov', bg: 'bg-orange-100', text: 'text-orange-700' },
+}
+
+function PlataformaBadge({ plataforma }) {
+  const config = PLATAFORMA_CONFIG[plataforma] || { label: plataforma || '—', bg: 'bg-gray-100', text: 'text-gray-600' }
+  return (
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.text}`}>
+      {config.label}
+    </span>
+  )
 }

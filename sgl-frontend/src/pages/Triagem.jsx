@@ -245,6 +245,7 @@ export default function Triagem() {
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-semibold text-gray-900">{e.orgao_razao_social}</h3>
                     {e.uf && <span className="badge bg-gray-100 text-gray-600">{e.uf}</span>}
+                    {e.plataforma_origem && <PlataformaBadge plataforma={e.plataforma_origem} />}
                     {e.srp && <span className="badge bg-indigo-50 text-indigo-600 text-xs">SRP</span>}
                   </div>
                   <p className="text-sm text-gray-600 mb-2">{e.objeto_resumo || 'Sem descrição do objeto'}</p>
@@ -410,5 +411,21 @@ export default function Triagem() {
         </div>
       )}
     </div>
+  )
+}
+
+const PLATAFORMA_CONFIG = {
+  pncp:            { label: 'PNCP',     bg: 'bg-blue-100',   text: 'text-blue-700' },
+  bbmnet:          { label: 'BBMNET',   bg: 'bg-green-100',  text: 'text-green-700' },
+  licitardigital:  { label: 'Licitar',  bg: 'bg-purple-100', text: 'text-purple-700' },
+  comprasgov:      { label: 'ComprasGov', bg: 'bg-orange-100', text: 'text-orange-700' },
+}
+
+function PlataformaBadge({ plataforma }) {
+  const config = PLATAFORMA_CONFIG[plataforma] || { label: plataforma || '—', bg: 'bg-gray-100', text: 'text-gray-600' }
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${config.bg} ${config.text}`}>
+      {config.label}
+    </span>
   )
 }

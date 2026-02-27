@@ -240,3 +240,42 @@ def _job_captacao_bbmnet(app, periodo_dias=3):
         except Exception as e:
             logger.error(f"Erro na captação BBMNET automática: {e}", exc_info=True)
             return {'erro': str(e)}
+
+
+def _job_captacao_licitardigital(app, periodo_dias=3):
+    """
+    Executa captação automática Licitar Digital (API Partner) dentro do contexto Flask.
+    """
+    with app.app_context():
+        try:
+            from .services.licitardigital_integration import executar_captacao_licitardigital
+            from .models.database import db, LogAtividade
+
+            logger.info(f"=== CAPTAÇÃO LICITAR DIGITAL AUTOMÁTICA | período: {periodo_dias} dias ===")
+
+            stats = executar_captacao_licitardigital(
+                app_config=app.config,
+                periodo_dias=periodo_dias,
+            )
+
+            # Registrar log
+            try:
+                log = LogAtividade(
+                    acao='captacao_licitardigital',
+                    entidade='edital',
+                    detalhes={
+                        'stats': stats,
+                        'periodo_dias': periodo_dias,
+                    },
+                )
+                db.session.add(log)
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Erro ao registrar log Licitar Digital: {e}")
+
+            logger.info(f"=== CAPTAÇÃO LICITAR DIGITAL CONCLUÍDA: {stats} ===")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Erro na captação Licitar Digital automática: {e}", exc_info=True)
+            return {'erro': str(e)}
