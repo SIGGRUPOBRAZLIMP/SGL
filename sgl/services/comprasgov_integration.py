@@ -1,14 +1,15 @@
 """
 SGL - Integração Compras.gov.br
 
-Mudanças vs versão anterior:
-- Formato de data: YYYY-MM-DD (não mais YYYYMMDD)
-- Endpoints corretos do Swagger
-- Client com timeout reduzido (25s) e orçamento de tempo (90s)
+Busca contratações via API Dados Abertos e SALVA no banco SGL.
+Formato de data: YYYY-MM-DD
+Endpoints do Swagger: https://dadosabertos.compras.gov.br/swagger-ui/index.html
 """
 import logging
 import os
 from datetime import datetime, timedelta
+
+from flask import current_app
 
 from .comprasgov_client import (
     ComprasGovClient,
@@ -27,25 +28,18 @@ def executar_captacao_comprasgov(
     incluir_legado=False,
 ):
     """
-    Executa captação completa do Compras.gov.br.
-
-    Args:
-        app_config: Flask app config (não usado, mantém interface consistente)
-        periodo_dias: int dias para trás
-        ufs: list[str] UFs para buscar
-        modalidade_ids: list[int] IDs de modalidade (Lei 14.133)
-        incluir_legado: bool se deve buscar também no módulo legado (Lei 8.666)
+    Executa captação completa do Compras.gov.br e persiste no banco.
 
     Returns:
-        dict com resultados da captação
+        dict com {total_encontrados, novos_salvos, duplicados, erros, plataforma}
     """
-    resultado = {
+    stats = {
         "plataforma": "comprasgov",
-        "sucesso": False,
-        "mensagem": "",
         "total_encontrados": 0,
-        "editais": [],
-        "erros": [],
+        "novos_salvos": 0,
+        "duplicados": 0,
+        "erros": 0,
+        "mensagem": "",
     }
 
     try:
@@ -83,18 +77,18 @@ def executar_captacao_comprasgov(
             ufs=ufs,
         )
 
-        editais_14133 = []
+        editais_convertidos = []
         for c in contratacoes_raw:
             try:
                 edital = converter_contratacao_14133_para_sgl(c)
-                editais_14133.append(edital)
+                editais_convertidos.append(edital)
             except Exception as e:
-                resultado["erros"].append(f"Erro converter contratação: {e}")
+                stats["erros"] += 1
+                logger.warning("Erro converter contratação ComprasGov: %s", e)
 
-        logger.info("ComprasGov 14.133: %d editais convertidos", len(editais_14133))
+        logger.info("ComprasGov 14.133: %d editais convertidos", len(editais_convertidos))
 
         # --- Módulo Legado (Lei 8.666) - Opcional ---
-        editais_legado = []
         if incluir_legado:
             try:
                 licitacoes_raw = client.buscar_licitacoes_legado_completo(
@@ -105,40 +99,127 @@ def executar_captacao_comprasgov(
                 for lic in licitacoes_raw:
                     try:
                         edital = converter_licitacao_legado_para_sgl(lic)
-                        editais_legado.append(edital)
+                        editais_convertidos.append(edital)
                     except Exception as e:
-                        resultado["erros"].append(f"Erro converter legado: {e}")
+                        stats["erros"] += 1
+                        logger.warning("Erro converter legado ComprasGov: %s", e)
 
-                logger.info("ComprasGov Legado: %d editais convertidos", len(editais_legado))
+                logger.info("ComprasGov Legado: %d editais adicionados", len(licitacoes_raw))
             except Exception as e:
                 logger.warning("ComprasGov Legado falhou: %s", e)
-                resultado["erros"].append(f"Legado: {e}")
+                stats["erros"] += 1
 
-        # Consolidar
-        todos_editais = editais_14133 + editais_legado
-
-        # Dedup por hash_scraper dentro do batch
+        # Dedup interno (dentro do batch)
         hashes_vistos = set()
         editais_unicos = []
-        for ed in todos_editais:
+        for ed in editais_convertidos:
             h = ed.get("hash_scraper", "")
             if h and h not in hashes_vistos:
                 hashes_vistos.add(h)
                 editais_unicos.append(ed)
 
-        resultado["sucesso"] = True
-        resultado["total_encontrados"] = len(editais_unicos)
-        resultado["editais"] = editais_unicos
-        resultado["mensagem"] = (
-            f"ComprasGov: {len(editais_14133)} contratações (14.133)"
-            + (f" + {len(editais_legado)} licitações (legado)" if incluir_legado else "")
-            + f" = {len(editais_unicos)} únicos"
+        stats["total_encontrados"] = len(editais_unicos)
+
+        if not editais_unicos:
+            stats["mensagem"] = (
+                f"ComprasGov: 0 contratações ({len(contratacoes_raw)}) = 0 únicos"
+            )
+            logger.info(stats["mensagem"])
+            return stats
+
+        # ========== SALVAR NO BANCO ==========
+        from .. import db
+        from ..models import Edital, Triagem
+
+        for edital_sgl in editais_unicos:
+            try:
+                hash_scraper = edital_sgl.get("hash_scraper")
+
+                # Dedup por hash_scraper
+                if hash_scraper:
+                    existente = Edital.query.filter_by(hash_scraper=hash_scraper).first()
+                    if existente:
+                        stats["duplicados"] += 1
+                        continue
+
+                # Dedup por processo + orgao + plataforma
+                orgao = edital_sgl.get("orgao_razao_social")
+                processo = edital_sgl.get("numero_processo")
+                if orgao and processo:
+                    existente = Edital.query.filter_by(
+                        orgao_razao_social=orgao,
+                        numero_processo=processo,
+                        plataforma_origem="comprasgov",
+                    ).first()
+                    if existente:
+                        stats["duplicados"] += 1
+                        continue
+
+                # Parse datas
+                def _parse_dt(s):
+                    if not s:
+                        return None
+                    try:
+                        clean = s.replace("Z", "").split("+")[0].split("-03:00")[0]
+                        return datetime.fromisoformat(clean)
+                    except (ValueError, TypeError):
+                        return None
+
+                edital = Edital(
+                    hash_scraper=hash_scraper,
+                    numero_pregao=edital_sgl.get("numero_pregao"),
+                    numero_processo=edital_sgl.get("numero_processo"),
+                    orgao_cnpj=edital_sgl.get("orgao_cnpj"),
+                    orgao_razao_social=edital_sgl.get("orgao_razao_social"),
+                    unidade_nome=edital_sgl.get("unidade_nome"),
+                    uf=edital_sgl.get("uf"),
+                    municipio=edital_sgl.get("municipio"),
+                    objeto_resumo=edital_sgl.get("objeto_resumo"),
+                    objeto_completo=edital_sgl.get("objeto_completo"),
+                    modalidade_nome=edital_sgl.get("modalidade_nome"),
+                    srp=edital_sgl.get("srp", False),
+                    data_publicacao=_parse_dt(edital_sgl.get("data_publicacao")),
+                    data_abertura_proposta=_parse_dt(edital_sgl.get("data_abertura_proposta")),
+                    data_encerramento_proposta=_parse_dt(edital_sgl.get("data_encerramento_proposta")),
+                    valor_estimado=edital_sgl.get("valor_estimado"),
+                    plataforma_origem="comprasgov",
+                    url_original=edital_sgl.get("url_original"),
+                    link_sistema_origem=edital_sgl.get("link_sistema_origem"),
+                    situacao_pncp=edital_sgl.get("situacao_pncp"),
+                    status="captado",
+                )
+                db.session.add(edital)
+                db.session.flush()
+
+                # Criar triagem automática
+                triagem = Triagem(
+                    edital_id=edital.id,
+                    decisao="pendente",
+                    prioridade="media",
+                )
+                db.session.add(triagem)
+                db.session.commit()
+
+                stats["novos_salvos"] += 1
+
+            except Exception as exc:
+                db.session.rollback()
+                logger.error(
+                    "Erro salvar edital ComprasGov hash=%s: %s",
+                    edital_sgl.get("hash_scraper", "?"), exc,
+                )
+                stats["erros"] += 1
+
+        stats["mensagem"] = (
+            f"ComprasGov: {stats['total_encontrados']} encontrados, "
+            f"{stats['novos_salvos']} novos, {stats['duplicados']} duplicados, "
+            f"{stats['erros']} erros"
         )
-        logger.info(resultado["mensagem"])
+        logger.info(stats["mensagem"])
 
     except Exception as e:
         logger.exception("Erro na captação ComprasGov: %s", e)
-        resultado["mensagem"] = f"Erro ComprasGov: {str(e)}"
-        resultado["erros"].append(str(e))
+        stats["mensagem"] = f"Erro ComprasGov: {str(e)}"
+        stats["erros"] += 1
 
-    return resultado
+    return stats
