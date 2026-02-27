@@ -45,7 +45,7 @@ export default function Editais() {
     ).length
   }, [filters])
 
-  useEffect(() => { loadEditais() }, [page, filters.ordenar_por, filters.ordem])
+  useEffect(() => { loadEditais() }, [page, filters.ordenar_por, filters.ordem, filters.status, filters.uf, filters.plataforma])
 
   const loadEditais = async () => {
     setLoading(true)
@@ -140,19 +140,19 @@ export default function Editais() {
 
           {/* Quick filters inline */}
           <div className="w-36">
-            <select value={filters.status} onChange={(e) => { handleFilterChange('status', e.target.value); setPage(1); setTimeout(loadEditais, 0) }} className="input-field text-sm">
+            <select value={filters.status} onChange={(e) => { handleFilterChange('status', e.target.value); setPage(1) }} className="input-field text-sm">
               <option value="">Status</option>
               {STATUS_EDITAL.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
           <div className="w-36">
-            <select value={filters.uf} onChange={(e) => { handleFilterChange('uf', e.target.value); setPage(1); setTimeout(loadEditais, 0) }} className="input-field text-sm">
+            <select value={filters.uf} onChange={(e) => { handleFilterChange('uf', e.target.value); setPage(1) }} className="input-field text-sm">
               <option value="">UF</option>
               {UFS.map(uf => <option key={uf} value={uf}>{uf}</option>)}
             </select>
           </div>
           <div className="w-40">
-            <select value={filters.plataforma} onChange={(e) => { handleFilterChange('plataforma', e.target.value); setPage(1); setTimeout(loadEditais, 0) }} className="input-field text-sm">
+            <select value={filters.plataforma} onChange={(e) => { handleFilterChange('plataforma', e.target.value); setPage(1) }} className="input-field text-sm">
               <option value="">Plataforma</option>
               <option value="pncp">PNCP</option>
               <option value="bbmnet">BBMNET</option>
