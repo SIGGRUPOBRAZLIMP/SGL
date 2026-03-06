@@ -571,7 +571,121 @@ def decidir_triagem(edital_id):
         edital.status = 'rejeitado'
 
     db.session.commit()
+
+    # Auto-download de documentos ao aprovar
+    if data.get('decisao') == 'aprovado':
+        try:
+            from ..services.documento_downloader import disparar_download_async
+            disparar_download_async(edital_id, current_app._get_current_object())
+        except Exception as e:
+            current_app.logger.warning('Erro ao disparar download edital %s: %s', edital_id, e)
+
     return jsonify(triagem.to_dict())
+
+
+# ============================================================
+# TRIAGEM EM MASSA (BULK)
+# ============================================================
+
+@api_bp.route('/triagem/bulk', methods=['POST'])
+@jwt_required()
+def triagem_bulk():
+    """Triagem em massa — aprovar ou rejeitar múltiplos editais de uma vez."""
+    data = request.get_json()
+    edital_ids = data.get('edital_ids', [])
+    decisao = data.get('decisao')
+    prioridade = data.get('prioridade', 'media')
+    motivo_rejeicao = data.get('motivo_rejeicao')
+    observacao = data.get('observacao')
+    usuario_id = int(get_jwt_identity())
+
+    if not edital_ids:
+        return jsonify({'error': 'Nenhum edital selecionado'}), 400
+    if decisao not in ('aprovado', 'rejeitado'):
+        return jsonify({'error': 'Decisão inválida (aprovado ou rejeitado)'}), 400
+
+    stats = {'processados': 0, 'erros': 0}
+
+    for eid in edital_ids:
+        try:
+            triagem = Triagem.query.filter_by(edital_id=eid).first()
+            if not triagem:
+                stats['erros'] += 1
+                continue
+
+            triagem.decisao = decisao
+            triagem.prioridade = prioridade
+            triagem.motivo_rejeicao = motivo_rejeicao if decisao == 'rejeitado' else None
+            triagem.observacoes = observacao
+            triagem.usuario_triador_id = usuario_id
+            triagem.data_triagem = datetime.now(timezone.utc)
+
+            edital = Edital.query.get(eid)
+            if edital:
+                edital.status = decisao
+
+            stats['processados'] += 1
+        except Exception as e:
+            current_app.logger.error('Erro triagem bulk edital %s: %s', eid, e)
+            stats['erros'] += 1
+
+    db.session.commit()
+
+    # Auto-download para editais aprovados em massa
+    if decisao == 'aprovado':
+        try:
+            from ..services.documento_downloader import disparar_download_async
+            app_ref = current_app._get_current_object()
+            for eid in edital_ids:
+                disparar_download_async(eid, app_ref)
+        except Exception as e:
+            current_app.logger.warning('Erro disparar download bulk: %s', e)
+
+    current_app.logger.info(
+        'Triagem bulk: %s %d editais por usuario %s',
+        decisao, stats['processados'], usuario_id,
+    )
+
+    return jsonify({
+        'sucesso': True,
+        'decisao': decisao,
+        'processados': stats['processados'],
+        'erros': stats['erros'],
+    }), 200
+
+
+# ============================================================
+# DOWNLOAD DE DOCUMENTOS → DROPBOX
+# ============================================================
+
+@api_bp.route('/editais/<int:edital_id>/download-documentos', methods=['POST'])
+@jwt_required()
+def download_documentos_edital(edital_id):
+    """Dispara download de documentos do edital para o Dropbox (manual)."""
+    edital = Edital.query.get(edital_id)
+    if not edital:
+        return jsonify({'error': 'Edital não encontrado'}), 404
+
+    try:
+        from ..services.documento_downloader import disparar_download_async
+        disparar_download_async(edital_id, current_app._get_current_object())
+        return jsonify({
+            'sucesso': True,
+            'mensagem': f'Download iniciado para edital {edital_id}. Arquivos serão enviados ao Dropbox.'
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/dropbox/status', methods=['GET'])
+@jwt_required()
+def dropbox_status():
+    """Testa conexão com o Dropbox."""
+    try:
+        from ..services.dropbox_service import testar_conexao
+        return jsonify(testar_conexao())
+    except Exception as e:
+        return jsonify({'ok': False, 'erro': str(e)})
 
 
 # ============================================================
