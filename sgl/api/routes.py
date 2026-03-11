@@ -580,6 +580,13 @@ def decidir_triagem(edital_id):
         except Exception as e:
             current_app.logger.warning('Erro ao disparar download edital %s: %s', edital_id, e)
 
+        # Auto-gerar planilha de cotação
+        try:
+            from ..services.planilha_cotacao_service import disparar_geracao_planilha_async
+            disparar_geracao_planilha_async(edital_id, current_app._get_current_object())
+        except Exception as e:
+            current_app.logger.warning('Erro ao gerar planilha edital %s: %s', edital_id, e)
+
     return jsonify(triagem.to_dict())
 
 
@@ -635,11 +642,13 @@ def triagem_bulk():
     if decisao == 'aprovado':
         try:
             from ..services.documento_downloader import disparar_download_async
+            from ..services.planilha_cotacao_service import disparar_geracao_planilha_async
             app_ref = current_app._get_current_object()
             for eid in edital_ids:
                 disparar_download_async(eid, app_ref)
+                disparar_geracao_planilha_async(eid, app_ref)
         except Exception as e:
-            current_app.logger.warning('Erro disparar download bulk: %s', e)
+            current_app.logger.warning('Erro disparar download/planilha bulk: %s', e)
 
     current_app.logger.info(
         'Triagem bulk: %s %d editais por usuario %s',
@@ -672,6 +681,25 @@ def download_documentos_edital(edital_id):
         return jsonify({
             'sucesso': True,
             'mensagem': f'Download iniciado para edital {edital_id}. Arquivos serão enviados ao Dropbox.'
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/editais/<int:edital_id>/gerar-planilha', methods=['POST'])
+@jwt_required()
+def gerar_planilha_edital(edital_id):
+    """Gera planilha de cotação do edital e envia ao Dropbox (manual)."""
+    edital = Edital.query.get(edital_id)
+    if not edital:
+        return jsonify({'error': 'Edital não encontrado'}), 404
+
+    try:
+        from ..services.planilha_cotacao_service import disparar_geracao_planilha_async
+        disparar_geracao_planilha_async(edital_id, current_app._get_current_object())
+        return jsonify({
+            'sucesso': True,
+            'mensagem': f'Planilha de cotação sendo gerada para edital {edital_id}. Será enviada ao Dropbox.'
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
