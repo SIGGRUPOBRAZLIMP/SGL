@@ -228,29 +228,46 @@ class CaptacaoService:
     # =========================================================
     # EXTRAÇÃO AI DE ITENS
     # =========================================================
-    
+
     def extrair_itens_edital(self, edital_id: int) -> dict:
         """
-        Extrai itens de um edital usando Claude AI.
-        Pode ser chamado manualmente ou via scheduler.
-        
+        Extrai itens de um edital.
+        Opção C: API PNCP direta (fonte primária) → AI com PDF (fallback).
+
         Returns:
             dict com resultado da extração
         """
-        if not self.interpreter:
-            return {'erro': 'Claude API não configurada'}
-        
         edital = Edital.query.get(edital_id)
         if not edital:
             return {'erro': 'Edital não encontrado'}
-        
+
+        # Limpar itens anteriores para evitar duplicatas em re-execução
+        ItemEditalExtraido.query.filter_by(edital_id=edital_id).delete()
+        db.session.commit()
+
+        # ► FONTE 1: API PNCP direta (confiável, sem depender de PDF)
+        if edital.plataforma_origem in ('pncp', 'comprasgov'):
+            resultado = self._buscar_itens_pncp_api(edital)
+            if resultado.get('itens_salvos', 0) > 0:
+                logger.info(
+                    "Itens obtidos via API PNCP: edital=%d, %d itens",
+                    edital_id, resultado['itens_salvos']
+                )
+                return resultado
+            logger.warning(
+                "API PNCP não retornou itens para edital %d — tentando AI", edital_id
+            )
+
+        # ► FONTE 2: AI com texto do PDF (fallback para todas as plataformas)
+        if not self.interpreter:
+            return {'erro': 'Claude API não configurada e API PNCP não retornou itens'}
+
         # Buscar arquivo principal do edital
         arquivo_edital = edital.arquivos.filter_by(tipo='edital').first()
         if not arquivo_edital:
             arquivo_edital = edital.arquivos.first()
-        
+
         if not arquivo_edital or not arquivo_edital.texto_extraido:
-            # Tentar extrair texto do PDF
             if arquivo_edital and arquivo_edital.url_cloudinary:
                 texto = self._baixar_e_extrair_texto(arquivo_edital.url_cloudinary)
                 if texto:
@@ -259,35 +276,125 @@ class CaptacaoService:
                 else:
                     return {'erro': 'Não foi possível extrair texto do PDF'}
             else:
-                # Fallback: usar texto do objeto
+                # Último recurso: usar objeto_completo (qualidade baixa)
                 texto_obj = edital.objeto_completo or edital.objeto_resumo or ''
                 if not texto_obj:
                     return {'erro': 'Sem texto disponível para extração'}
+                logger.warning(
+                    "Usando objeto_resumo como texto para AI — qualidade pode ser baixa: edital=%d",
+                    edital_id
+                )
                 resultado = self.interpreter.extrair_itens(texto_obj)
-                itens_salvos = 0
-                for item in resultado.get('itens', []):
-                    item_db = ItemEditalExtraido(
-                        edital_id=edital.id,
-                        numero_item=item.get('numero_item'),
-                        descricao=item.get('descricao'),
-                        quantidade=item.get('quantidade'),
-                        unidade_compra=item.get('unidade_compra'),
-                        preco_unitario_maximo=item.get('preco_unitario_maximo'),
-                        preco_total_maximo=item.get('preco_total_maximo'),
-                        codigo_referencia=item.get('codigo_referencia'),
-                        grupo_lote=item.get('grupo_lote'),
-                        confianca_extracao=item.get('confianca'),
-                        metodo_extracao='claude_api',
-                    )
-                    db.session.add(item_db)
-                    itens_salvos += 1
-                db.session.commit()
-                resultado['itens_salvos'] = itens_salvos
-                return resultado
+                return self._salvar_itens_ai(edital, resultado)
 
-        texto = arquivo_edital.texto_extraido
-        resultado = self.interpreter.extrair_itens(texto)
-        
+        resultado = self.interpreter.extrair_itens(arquivo_edital.texto_extraido)
+        return self._salvar_itens_ai(edital, resultado)
+
+    def _buscar_itens_pncp_api(self, edital) -> dict:
+        """
+        Busca itens diretamente da API PNCP — sem PDF, sem AI.
+        Mapeia campos da API para ItemEditalExtraido.
+        """
+        from .documento_downloader import _parse_pncp_info
+        import re
+
+        cnpj, ano, seq = _parse_pncp_info(edital)
+        if not cnpj or not ano or not seq:
+            logger.warning(
+                "API PNCP: não foi possível extrair CNPJ/ano/seq do edital %d", edital.id
+            )
+            return {'itens_salvos': 0}
+
+        try:
+            itens_api = self.pncp.buscar_itens_contratacao(cnpj, ano, seq)
+        except Exception as e:
+            logger.error("Erro ao buscar itens PNCP edital %d: %s", edital.id, e)
+            return {'itens_salvos': 0}
+
+        if not isinstance(itens_api, list) or not itens_api:
+            logger.warning(
+                "API PNCP retornou %s para itens do edital %d",
+                type(itens_api).__name__, edital.id
+            )
+            return {'itens_salvos': 0}
+
+        itens_salvos = 0
+        for item_api in itens_api:
+            try:
+                # Mapear campos da API PNCP → modelo ItemEditalExtraido
+                numero = item_api.get('numeroItem') or item_api.get('numero') or itens_salvos + 1
+                descricao = (
+                    item_api.get('descricao')
+                    or item_api.get('descricaoItem')
+                    or item_api.get('objeto')
+                    or ''
+                )
+                quantidade = item_api.get('quantidade') or item_api.get('qtd')
+                unidade = (
+                    item_api.get('unidadeMedida')
+                    or item_api.get('unidade')
+                    or item_api.get('unidadeCompra')
+                    or 'UN'
+                )
+                preco_unit = (
+                    item_api.get('valorUnitarioEstimado')
+                    or item_api.get('valorUnitario')
+                    or item_api.get('precoUnitarioMaximo')
+                )
+                preco_total = (
+                    item_api.get('valorTotal')
+                    or item_api.get('valorTotalEstimado')
+                )
+                codigo_ref = (
+                    item_api.get('catalogoItemCodigo')
+                    or item_api.get('codigoItem')
+                    or item_api.get('codigo')
+                    or item_api.get('catmatCatserCodigo')
+                )
+                grupo_lote = (
+                    str(item_api.get('lote')) if item_api.get('lote') else None
+                    or str(item_api.get('grupoItemId')) if item_api.get('grupoItemId') else None
+                )
+
+                # Converter para float com segurança
+                def _to_float(v):
+                    try:
+                        return float(str(v).replace(',', '.')) if v is not None else None
+                    except (ValueError, TypeError):
+                        return None
+
+                item_db = ItemEditalExtraido(
+                    edital_id=edital.id,
+                    numero_item=int(numero),
+                    descricao=descricao,
+                    quantidade=_to_float(quantidade),
+                    unidade_compra=(unidade or 'UN').upper().strip()[:50],
+                    preco_unitario_maximo=_to_float(preco_unit),
+                    preco_total_maximo=_to_float(preco_total),
+                    codigo_referencia=str(codigo_ref)[:50] if codigo_ref else None,
+                    grupo_lote=grupo_lote,
+                    confianca_extracao=1.0,  # API oficial = confiança máxima
+                    metodo_extracao='pncp_api',
+                )
+                db.session.add(item_db)
+                itens_salvos += 1
+
+            except Exception as e:
+                logger.warning("Erro ao mapear item PNCP edital %d: %s | item: %s", edital.id, e, item_api)
+                continue
+
+        db.session.commit()
+        logger.info("API PNCP: %d itens salvos para edital %d", itens_salvos, edital.id)
+
+        return {
+            'itens_salvos': itens_salvos,
+            'total_itens': itens_salvos,
+            'metodo': 'pncp_api',
+            'confianca_geral': 1.0,
+        }
+
+    def _salvar_itens_ai(self, edital, resultado: dict) -> dict:
+        """Salva itens retornados pela AI no banco. Reutilizado nos dois caminhos AI."""
         itens_salvos = 0
         for item in resultado.get('itens', []):
             item_db = ItemEditalExtraido(
@@ -305,11 +412,10 @@ class CaptacaoService:
             )
             db.session.add(item_db)
             itens_salvos += 1
-        
+
         db.session.commit()
-        
-        logger.info(f"Extração AI: {itens_salvos} itens salvos para edital {edital_id}")
-        
+        logger.info("Extração AI: %d itens salvos para edital %d", itens_salvos, edital.id)
+
         resultado['itens_salvos'] = itens_salvos
         return resultado
     
