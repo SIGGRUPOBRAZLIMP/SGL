@@ -268,11 +268,16 @@ class CaptacaoService:
                 for item in resultado.get('itens', []):
                     item_db = ItemEditalExtraido(
                         edital_id=edital.id,
+                        numero_item=item.get('numero_item'),
                         descricao=item.get('descricao'),
                         quantidade=item.get('quantidade'),
-                        unidade=item.get('unidade'),
-                        valor_estimado=item.get('valor_estimado'),
-                        codigo_catmat=item.get('codigo_catmat'),
+                        unidade_compra=item.get('unidade_compra'),
+                        preco_unitario_maximo=item.get('preco_unitario_maximo'),
+                        preco_total_maximo=item.get('preco_total_maximo'),
+                        codigo_referencia=item.get('codigo_referencia'),
+                        grupo_lote=item.get('grupo_lote'),
+                        confianca_extracao=item.get('confianca'),
+                        metodo_extracao='claude_api',
                     )
                     db.session.add(item_db)
                     itens_salvos += 1
@@ -287,11 +292,16 @@ class CaptacaoService:
         for item in resultado.get('itens', []):
             item_db = ItemEditalExtraido(
                 edital_id=edital.id,
+                numero_item=item.get('numero_item'),
                 descricao=item.get('descricao'),
                 quantidade=item.get('quantidade'),
-                unidade=item.get('unidade'),
-                valor_estimado=item.get('valor_estimado'),
-                codigo_catmat=item.get('codigo_catmat'),
+                unidade_compra=item.get('unidade_compra'),
+                preco_unitario_maximo=item.get('preco_unitario_maximo'),
+                preco_total_maximo=item.get('preco_total_maximo'),
+                codigo_referencia=item.get('codigo_referencia'),
+                grupo_lote=item.get('grupo_lote'),
+                confianca_extracao=item.get('confianca'),
+                metodo_extracao='claude_api',
             )
             db.session.add(item_db)
             itens_salvos += 1
