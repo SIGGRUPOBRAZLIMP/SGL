@@ -7,14 +7,14 @@ Suporta: PNCP, ComprasGov (via PNCP), BBMNET, Licitar Digital.
 Fluxo:
   1. Detecta plataforma de origem do edital
   2. Baixa arquivos via API da plataforma
-  3. Upload para Dropbox em pasta organizada
-  4. Salva referências na tabela edital_arquivos
+  3. Extrai texto do PDF (para uso pela IA)
+  4. Upload para Dropbox em pasta organizada
+  5. Salva referencias na tabela edital_arquivos (com texto_extraido)
 """
 import logging
 import os
 import re
 import time
-import hashlib
 from datetime import datetime, timezone
 from threading import Thread
 
@@ -23,21 +23,73 @@ import requests
 logger = logging.getLogger(__name__)
 
 PNCP_API_BASE = "https://pncp.gov.br/pncp-api/v1"
-DOWNLOAD_TIMEOUT = 30  # segundos por arquivo
+DOWNLOAD_TIMEOUT = 30
 
 
 # ============================================================
-# FUNÇÕES AUXILIARES
+# EXTRACAO DE TEXTO DO PDF
+# ============================================================
+
+def _extrair_texto_pdf(pdf_bytes):
+    """
+    Extrai texto de bytes de um PDF.
+    Tenta pdfplumber primeiro, depois PyMuPDF como fallback.
+    """
+    if not pdf_bytes or len(pdf_bytes) < 100:
+        return ''
+
+    if not pdf_bytes[:5] == b'%PDF-':
+        logger.warning("Arquivo nao e PDF (header: %s)", pdf_bytes[:20])
+        return ''
+
+    texto = ''
+
+    # Tentar pdfplumber
+    try:
+        import pdfplumber
+        import io
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            paginas = []
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    paginas.append(t)
+            texto = '\n\n'.join(paginas)
+            if texto.strip():
+                logger.info("pdfplumber extraiu %d chars de %d paginas", len(texto), len(pdf.pages))
+                return texto.strip()
+    except Exception as e:
+        logger.warning("pdfplumber falhou: %s", e)
+
+    # Fallback: PyMuPDF (fitz)
+    try:
+        import fitz
+        import io
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        paginas = []
+        for page in doc:
+            t = page.get_text()
+            if t:
+                paginas.append(t)
+        total_pages = doc.page_count
+        doc.close()
+        texto = '\n\n'.join(paginas)
+        if texto.strip():
+            logger.info("PyMuPDF extraiu %d chars de %d paginas", len(texto), total_pages)
+            return texto.strip()
+    except Exception as e:
+        logger.warning("PyMuPDF falhou: %s", e)
+
+    logger.warning("Nenhum extrator conseguiu obter texto do PDF (%d bytes)", len(pdf_bytes))
+    return ''
+
+
+# ============================================================
+# FUNCOES AUXILIARES
 # ============================================================
 
 def _parse_pncp_info(edital):
-    """
-    Extrai CNPJ, ano e sequencial de um edital PNCP/ComprasGov.
-    Tenta múltiplas fontes: campos diretos, numero_controle_pncp, url_original.
-
-    Returns:
-        tuple (cnpj, ano, sequencial) ou (None, None, None)
-    """
+    """Extrai CNPJ, ano e sequencial de um edital PNCP/ComprasGov."""
     cnpj = edital.orgao_cnpj
     ano = edital.ano_compra
     seq = edital.sequencial_compra
@@ -46,14 +98,12 @@ def _parse_pncp_info(edital):
         cnpj_limpo = re.sub(r'[^0-9]', '', cnpj)
         return cnpj_limpo, int(ano), int(seq)
 
-    # Tentar extrair do numero_controle_pncp: "00394502000144-1-000818/2026"
     ncp = edital.numero_controle_pncp
     if ncp:
         match = re.match(r'^(\d{14})-\d+-(\d+)/(\d{4})$', ncp)
         if match:
             return match.group(1), int(match.group(3)), int(match.group(2))
 
-    # Tentar extrair da URL original: https://pncp.gov.br/app/editais/CNPJ-X-SEQ/ANO
     url = edital.url_original or ''
     match = re.search(r'editais/(\d{14})-\d+-(\d+)/(\d{4})', url)
     if match:
@@ -63,13 +113,12 @@ def _parse_pncp_info(edital):
 
 
 def _download_file(url, timeout=DOWNLOAD_TIMEOUT):
-    """Baixa arquivo de uma URL. Retorna (bytes, content_type, filename) ou (None, None, None)."""
+    """Baixa arquivo de uma URL. Retorna (bytes, content_type, filename)."""
     try:
         resp = requests.get(url, timeout=timeout, stream=True, allow_redirects=True)
         if resp.status_code == 200:
             content = resp.content
             ct = resp.headers.get('Content-Type', 'application/octet-stream')
-            # Tentar pegar nome do Content-Disposition
             cd = resp.headers.get('Content-Disposition', '')
             fname = None
             if 'filename' in cd:
@@ -90,20 +139,15 @@ def _download_file(url, timeout=DOWNLOAD_TIMEOUT):
 # ============================================================
 
 def _baixar_documentos_pncp(edital):
-    """
-    Baixa documentos do PNCP.
-    Endpoint: GET /v1/orgaos/{cnpj}/compras/{ano}/{seq}/arquivos
-    Retorna lista de {nome, bytes, content_type, url_original, tipo}
-    """
+    """Baixa documentos do PNCP."""
     cnpj, ano, seq = _parse_pncp_info(edital)
     if not cnpj or not ano or not seq:
         logger.warning(
-            "PNCP: Não foi possível extrair CNPJ/ano/seq do edital %d (plataforma=%s)",
+            "PNCP: Nao foi possivel extrair CNPJ/ano/seq do edital %d (plataforma=%s)",
             edital.id, edital.plataforma_origem,
         )
         return []
 
-    # Listar arquivos
     url_lista = f"{PNCP_API_BASE}/orgaos/{cnpj}/compras/{ano}/{seq}/arquivos"
     try:
         resp = requests.get(url_lista, timeout=15)
@@ -127,11 +171,9 @@ def _baixar_documentos_pncp(edital):
 
         content, ct, fname = _download_file(url_download)
         if content:
-            # Determinar nome do arquivo
             nome_arquivo = fname or f"{titulo}.pdf"
             nome_arquivo = re.sub(r'[\\/:*?"<>|]', '_', nome_arquivo)
 
-            # Determinar tipo
             tipo = "edital" if i == 0 else "anexo"
             titulo_lower = (titulo or "").lower()
             if "anexo" in titulo_lower:
@@ -143,6 +185,11 @@ def _baixar_documentos_pncp(edital):
             elif "edital" in titulo_lower or "aviso" in titulo_lower:
                 tipo = "edital"
 
+            # EXTRAIR TEXTO DO PDF
+            texto = ''
+            if (ct and 'pdf' in ct.lower()) or nome_arquivo.lower().endswith('.pdf'):
+                texto = _extrair_texto_pdf(content)
+
             documentos.append({
                 "nome": nome_arquivo,
                 "bytes": content,
@@ -150,41 +197,42 @@ def _baixar_documentos_pncp(edital):
                 "url_original": url_download,
                 "tipo": tipo,
                 "titulo_api": titulo,
+                "texto_extraido": texto,
             })
 
-        time.sleep(0.3)  # Rate limit
+        time.sleep(0.3)
 
     logger.info("PNCP: %d documentos baixados para edital %d", len(documentos), edital.id)
     return documentos
 
 
 def _baixar_documentos_bbmnet(edital):
-    """
-    BBMNET: documentos geralmente acessíveis via link no portal.
-    Tenta baixar da url_original e link_sistema_origem.
-    Muitos editais BBMNET também estão no PNCP — tenta ambos.
-    """
+    """BBMNET: tenta PNCP primeiro, depois URL original."""
     documentos = []
 
-    # 1. Tentar via PNCP (muitos editais BBMNET publicam lá)
     if edital.numero_controle_pncp or edital.orgao_cnpj:
         docs_pncp = _baixar_documentos_pncp(edital)
         if docs_pncp:
             return docs_pncp
 
-    # 2. Tentar baixar da URL original (link direto para o edital no BBMNET)
     urls_tentar = [edital.url_original, edital.link_sistema_origem]
     for url in urls_tentar:
         if url and url.startswith('http'):
             content, ct, fname = _download_file(url)
-            if content and len(content) > 1000:  # Não é uma página HTML de erro
+            if content and len(content) > 1000:
                 nome = fname or f"edital_bbmnet_{edital.id}.pdf"
+
+                texto = ''
+                if nome.lower().endswith('.pdf') or (ct and 'pdf' in ct.lower()):
+                    texto = _extrair_texto_pdf(content)
+
                 documentos.append({
                     "nome": nome,
                     "bytes": content,
                     "content_type": ct,
                     "url_original": url,
                     "tipo": "edital",
+                    "texto_extraido": texto,
                 })
                 break
 
@@ -193,16 +241,11 @@ def _baixar_documentos_bbmnet(edital):
 
 
 def _baixar_documentos_licitardigital(edital):
-    """
-    Licitar Digital: usa Partner API para listar documentos.
-    Endpoint: GET /api/v1/public/processDocuments?processId={id}
-    """
+    """Licitar Digital: usa Partner API para listar documentos."""
     documentos = []
 
-    # Precisa do ID externo do processo no Licitar Digital
     id_externo = edital.id_externo if hasattr(edital, 'id_externo') else None
 
-    # Tentar extrair ID da url_original
     if not id_externo and edital.url_original:
         match = re.search(r'/process(?:o)?/(\d+)', edital.url_original or '')
         if match:
@@ -217,7 +260,7 @@ def _baixar_documentos_licitardigital(edital):
     client_secret = os.environ.get("LICITAR_PARTNER_CLIENT_SECRET", "")
 
     if not base_url or not client_id:
-        logger.warning("Licitar Digital: credenciais não configuradas")
+        logger.warning("Licitar Digital: credenciais nao configuradas")
         return []
 
     import base64
@@ -249,12 +292,18 @@ def _baixar_documentos_licitardigital(edital):
         if url_download:
             content, ct, fname = _download_file(url_download)
             if content:
+                final_name = fname or nome
+                texto = ''
+                if final_name.lower().endswith('.pdf') or (ct and 'pdf' in ct.lower()):
+                    texto = _extrair_texto_pdf(content)
+
                 documentos.append({
-                    "nome": fname or nome,
+                    "nome": final_name,
                     "bytes": content,
                     "content_type": ct or "application/pdf",
                     "url_original": url_download,
                     "tipo": "edital" if len(documentos) == 0 else "anexo",
+                    "texto_extraido": texto,
                 })
             time.sleep(0.3)
 
@@ -267,17 +316,9 @@ def _baixar_documentos_licitardigital(edital):
 # ============================================================
 
 def baixar_e_enviar_dropbox(edital_id, app=None):
-    """
-    Pipeline completo: baixa documentos do edital e envia para Dropbox.
-    Roda em background thread.
-
-    Args:
-        edital_id: int ID do edital
-        app: Flask app (para contexto)
-    """
+    """Pipeline completo: baixa documentos, extrai texto, envia para Dropbox, salva no banco."""
     from . import dropbox_service
 
-    # Precisa de contexto Flask para acessar o banco
     if app is None:
         from flask import current_app
         app = current_app._get_current_object()
@@ -287,7 +328,7 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
 
         edital = Edital.query.get(edital_id)
         if not edital:
-            logger.error("Edital %d não encontrado para download", edital_id)
+            logger.error("Edital %d nao encontrado para download", edital_id)
             return
 
         plataforma = edital.plataforma_origem or ""
@@ -296,7 +337,6 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
             edital.id, plataforma, edital.orgao_razao_social,
         )
 
-        # Selecionar downloader por plataforma
         if plataforma in ("pncp", "comprasgov"):
             documentos = _baixar_documentos_pncp(edital)
         elif plataforma == "bbmnet":
@@ -304,21 +344,18 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
         elif plataforma == "licitardigital":
             documentos = _baixar_documentos_licitardigital(edital)
         else:
-            # Tentar PNCP como fallback
             documentos = _baixar_documentos_pncp(edital)
 
         if not documentos:
             logger.warning("Nenhum documento encontrado para edital %d", edital.id)
             return
 
-        # Criar pasta no Dropbox
         pasta_dropbox = dropbox_service.gerar_pasta_edital(edital)
         dropbox_service.criar_pasta(pasta_dropbox)
 
         salvos = 0
         for doc in documentos:
             try:
-                # Upload para Dropbox
                 dropbox_path = f"{pasta_dropbox}/{doc['nome']}"
                 resultado = dropbox_service.upload_arquivo(
                     doc["bytes"],
@@ -329,8 +366,8 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
                 if not resultado:
                     continue
 
-                # Salvar referência no banco
-                # Verificar se já existe (por nome + edital_id)
+                texto = doc.get("texto_extraido", "")
+
                 existente = EditalArquivo.query.filter_by(
                     edital_id=edital.id,
                     nome_arquivo=doc["nome"],
@@ -339,6 +376,8 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
                 if existente:
                     existente.url_cloudinary = resultado.get("shared_link") or resultado["dropbox_path"]
                     existente.tamanho_bytes = resultado["tamanho"]
+                    if texto and not existente.texto_extraido:
+                        existente.texto_extraido = texto
                 else:
                     arquivo = EditalArquivo(
                         edital_id=edital.id,
@@ -348,11 +387,18 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
                         url_original=doc.get("url_original"),
                         tamanho_bytes=resultado["tamanho"],
                         mime_type=doc.get("content_type", "application/pdf"),
+                        texto_extraido=texto,
                     )
                     db.session.add(arquivo)
 
                 db.session.commit()
                 salvos += 1
+
+                if texto:
+                    logger.info(
+                        "Texto extraido: edital=%d arquivo='%s' (%d chars)",
+                        edital.id, doc["nome"], len(texto),
+                    )
 
             except Exception as e:
                 db.session.rollback()
@@ -362,21 +408,41 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
                 )
 
         logger.info(
-            "Download concluído: edital=%d, %d/%d documentos salvos no Dropbox",
+            "Download concluido: edital=%d, %d/%d documentos salvos no Dropbox",
             edital.id, salvos, len(documentos),
         )
 
+        # ========== ENCADEAR: EXTRAÇÃO AI + PLANILHA ==========
+        # Agora que temos o texto extraído, podemos gerar itens via AI
+        # e depois gerar a planilha com os itens preenchidos
+        try:
+            from ..services.captacao_service import CaptacaoService
+            from flask import current_app
+
+            service = CaptacaoService(current_app.config)
+            resultado_ai = service.extrair_itens_edital(edital_id)
+
+            qtd_itens = resultado_ai.get('total_itens', 0)
+            logger.info("AI extraiu %d itens do edital %d", qtd_itens, edital_id)
+        except Exception as e:
+            logger.warning("Erro extrair itens AI edital %d: %s", edital_id, e)
+
+        # Gerar planilha de cotação (agora com itens preenchidos)
+        try:
+            from ..services.planilha_cotacao_service import gerar_e_enviar_planilha
+            gerar_e_enviar_planilha(edital_id, app)
+            logger.info("Planilha de cotacao gerada para edital %d", edital_id)
+        except Exception as e:
+            logger.warning("Erro gerar planilha edital %d: %s", edital_id, e)
+
 
 def disparar_download_async(edital_id, app):
-    """
-    Dispara download em background thread.
-    Chamado automaticamente ao aprovar edital na triagem.
-    """
+    """Dispara download em background thread."""
     thread = Thread(
         target=baixar_e_enviar_dropbox,
         args=(edital_id, app),
         daemon=True,
     )
     thread.start()
-    logger.info("Download assíncrono disparado para edital %d", edital_id)
+    logger.info("Download assincrono disparado para edital %d", edital_id)
     return thread

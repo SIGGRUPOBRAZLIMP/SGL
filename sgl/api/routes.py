@@ -572,20 +572,13 @@ def decidir_triagem(edital_id):
 
     db.session.commit()
 
-    # Auto-download de documentos ao aprovar
+    # Auto-download de documentos ao aprovar (encadeia: download → AI → planilha)
     if data.get('decisao') == 'aprovado':
         try:
             from ..services.documento_downloader import disparar_download_async
             disparar_download_async(edital_id, current_app._get_current_object())
         except Exception as e:
             current_app.logger.warning('Erro ao disparar download edital %s: %s', edital_id, e)
-
-        # Auto-gerar planilha de cotação
-        try:
-            from ..services.planilha_cotacao_service import disparar_geracao_planilha_async
-            disparar_geracao_planilha_async(edital_id, current_app._get_current_object())
-        except Exception as e:
-            current_app.logger.warning('Erro ao gerar planilha edital %s: %s', edital_id, e)
 
     return jsonify(triagem.to_dict())
 
@@ -638,17 +631,15 @@ def triagem_bulk():
 
     db.session.commit()
 
-    # Auto-download para editais aprovados em massa
+    # Auto-download para editais aprovados em massa (encadeia: download → AI → planilha)
     if decisao == 'aprovado':
         try:
             from ..services.documento_downloader import disparar_download_async
-            from ..services.planilha_cotacao_service import disparar_geracao_planilha_async
             app_ref = current_app._get_current_object()
             for eid in edital_ids:
                 disparar_download_async(eid, app_ref)
-                disparar_geracao_planilha_async(eid, app_ref)
         except Exception as e:
-            current_app.logger.warning('Erro disparar download/planilha bulk: %s', e)
+            current_app.logger.warning('Erro disparar download bulk: %s', e)
 
     current_app.logger.info(
         'Triagem bulk: %s %d editais por usuario %s',
