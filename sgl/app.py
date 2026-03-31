@@ -55,7 +55,6 @@ def create_app(config_name=None):
         from flask import request, jsonify
         from flask_jwt_extended import create_access_token, create_refresh_token
 
-        # CORS preflight
         if request.method == 'OPTIONS':
             from flask import make_response
             resp = make_response('', 204)
@@ -67,11 +66,10 @@ def create_app(config_name=None):
         try:
             import jwt as pyjwt
         except ImportError:
-            return jsonify({'ok': False, 'erro': 'PyJWT não instalado no servidor.'}), 500
+            return jsonify({'ok': False, 'erro': 'PyJWT não instalado.'}), 500
 
         data      = request.get_json(silent=True) or {}
         sso_token = (data.get('sso_token') or '').strip()
-
         if not sso_token:
             return jsonify({'ok': False, 'erro': 'sso_token ausente.'}), 400
 
@@ -90,58 +88,75 @@ def create_app(config_name=None):
         if payload.get('origem') != 'SIG':
             return jsonify({'ok': False, 'erro': 'Token não originado do SIG.'}), 401
 
-        username = (payload.get('username') or '').strip()
-        nome     = (payload.get('nome') or username).strip()
+        # Extrair dados do payload — SGL usa email como identificador único
+        nome     = (payload.get('nome') or payload.get('username') or '').strip()
         email    = (payload.get('email') or '').strip()
         is_admin = bool(payload.get('is_admin', False))
 
-        if not username:
-            return jsonify({'ok': False, 'erro': 'Usuário inválido no token.'}), 400
+        # Garantir email válido — usar username@sig.local como fallback
+        if not email:
+            username = payload.get('username', 'usuario')
+            email = f"{username}@sig.local"
 
-        # Criar ou atualizar usuário
+        if not nome:
+            return jsonify({'ok': False, 'erro': 'Nome inválido no token.'}), 400
+
+        # perfil SGL: 'admin' para admins do SIG, 'cotador' para demais
+        perfil_sgl = 'admin' if is_admin else 'cotador'
+
+        # Criar ou atualizar usuário na tabela 'usuarios' do SGL
         try:
             from sqlalchemy import text
             with db.engine.begin() as conn:
                 row = conn.execute(
-                    text('SELECT id FROM users WHERE username = :u'),
-                    {'u': username}
+                    text('SELECT id, nome, email, perfil, ativo FROM usuarios WHERE email = :e'),
+                    {'e': email}
                 ).fetchone()
 
                 if row:
-                    user_id = row[0]
+                    usuario_id = row[0]
+                    # Atualizar nome e garantir que está ativo
                     conn.execute(
-                        text('UPDATE users SET nome = :n, email = :e WHERE username = :u'),
-                        {'n': nome, 'e': email, 'u': username}
+                        text('UPDATE usuarios SET nome = :n, ativo = TRUE WHERE email = :e'),
+                        {'n': nome, 'e': email}
                     )
+                    perfil_atual = row[3]
                 else:
+                    # Criar usuário com senha aleatória (login só via SSO do SIG)
                     from werkzeug.security import generate_password_hash
-                    pw = generate_password_hash(secrets.token_hex(32))
+                    senha_hash = generate_password_hash(secrets.token_hex(32))
                     result = conn.execute(text("""
-                        INSERT INTO users (username, nome, email, password_hash, is_admin, is_active)
-                        VALUES (:u, :n, :e, :p, :a, TRUE) RETURNING id
-                    """), {'u': username, 'n': nome, 'e': email, 'p': pw, 'a': is_admin})
-                    user_id = result.fetchone()[0]
+                        INSERT INTO usuarios (nome, email, senha_hash, perfil, ativo)
+                        VALUES (:n, :e, :s, :p, TRUE)
+                        RETURNING id
+                    """), {'n': nome, 'e': email, 's': senha_hash, 'p': perfil_sgl})
+                    usuario_id = result.fetchone()[0]
+                    perfil_atual = perfil_sgl
 
         except Exception as e:
             app.logger.error(f'[SSO-SIG] Erro BD: {e}')
-            return jsonify({'ok': False, 'erro': 'Erro interno ao autenticar usuário.'}), 500
+            return jsonify({'ok': False, 'erro': f'Erro ao autenticar: {e}'}), 500
 
-        # Gerar tokens SGL
-        identity      = str(user_id)
+        # Gerar tokens SGL via flask_jwt_extended
+        identity      = str(usuario_id)
         access_token  = create_access_token(identity=identity)
         refresh_token = create_refresh_token(identity=identity)
+
+        # Objeto usuario no formato que AuthContext.jsx espera
+        usuario = {
+            'id':         usuario_id,
+            'nome':       nome,
+            'email':      email,
+            'perfil':     perfil_atual,
+            'ativo':      True,
+            'empresa_id': None,
+        }
 
         return jsonify({
             'ok':            True,
             'access_token':  access_token,
             'refresh_token': refresh_token,
-            'user': {
-                'id':       user_id,
-                'username': username,
-                'nome':     nome,
-                'email':    email,
-                'is_admin': is_admin,
-            }
+            'user':          usuario,
         }), 200
     # ─────────────────────────────────────────────────────────────────────
 
