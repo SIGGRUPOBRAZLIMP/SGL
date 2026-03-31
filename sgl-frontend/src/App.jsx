@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import api from './services/api'
 import { useAuth } from './contexts/AuthContext'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -42,17 +43,11 @@ function SSOHandler() {
       window.location.replace('/login?sso_erro=timeout')
     }, 10000)
 
-    fetch('/api/auth/sso-sig', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ sso_token: ssoToken }),
-    })
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status} — endpoint SSO não encontrado`)
-        return r.json()
-      })
-      .then(data => {
+    // Usa o api (axios) que já tem a URL correta do backend (sgl-api-xm64.onrender.com)
+    api.post('/auth/sso-sig', { sso_token: ssoToken })
+      .then(response => {
         clearTimeout(_ssoTimeout)
+        const data = response.data
         if (data.ok) {
           localStorage.setItem('sgl_token', data.access_token)
           localStorage.setItem('sgl_user',  JSON.stringify(data.user))
@@ -65,9 +60,10 @@ function SSOHandler() {
       })
       .catch(e => {
         clearTimeout(_ssoTimeout)
-        console.error('[SSO-SIG] Erro:', e.message)
+        const msg = e.response?.data?.erro || e.message || 'erro_rede'
+        console.error('[SSO-SIG] Erro:', msg)
         window._ssoProcessando = false
-        window.location.replace('/login?sso_erro=' + encodeURIComponent(e.message))
+        window.location.replace('/login?sso_erro=' + encodeURIComponent(msg))
       })
   }, [])
 
