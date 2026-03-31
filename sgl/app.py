@@ -36,6 +36,10 @@ def create_app(config_name=None):
     from .api.routes import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
 
+    # SSO — Integração com SIG
+    from .api.sso_sig import sso_bp
+    app.register_blueprint(sso_bp, url_prefix='/api')
+
     # Criar tabelas no primeiro request (dev only)
     @app.before_request
     def create_tables():
