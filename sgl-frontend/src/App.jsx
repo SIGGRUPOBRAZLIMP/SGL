@@ -35,28 +35,39 @@ function SSOHandler() {
     if (window._ssoProcessando) return
     window._ssoProcessando = true
 
+    // Timeout de segurança: se travar por mais de 10s, vai para login
+    const _ssoTimeout = setTimeout(() => {
+      console.warn('[SSO-SIG] Timeout — redirecionando para login')
+      window._ssoProcessando = false
+      window.location.replace('/login?sso_erro=timeout')
+    }, 10000)
+
     fetch('/api/auth/sso-sig', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ sso_token: ssoToken }),
     })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} — endpoint SSO não encontrado`)
+        return r.json()
+      })
       .then(data => {
+        clearTimeout(_ssoTimeout)
         if (data.ok) {
-          // Armazenar com as mesmas chaves que AuthContext usa
           localStorage.setItem('sgl_token', data.access_token)
           localStorage.setItem('sgl_user',  JSON.stringify(data.user))
-          // Recarregar sem o sso_token na URL para AuthContext re-inicializar
           window.location.replace('/')
         } else {
           console.error('[SSO-SIG] Falha:', data.erro)
           window._ssoProcessando = false
-          window.location.replace('/login?sso_erro=' + encodeURIComponent(data.erro))
+          window.location.replace('/login?sso_erro=' + encodeURIComponent(data.erro || 'erro_sso'))
         }
       })
       .catch(e => {
-        console.error('[SSO-SIG] Erro de rede:', e)
+        clearTimeout(_ssoTimeout)
+        console.error('[SSO-SIG] Erro:', e.message)
         window._ssoProcessando = false
+        window.location.replace('/login?sso_erro=' + encodeURIComponent(e.message))
       })
   }, [])
 
