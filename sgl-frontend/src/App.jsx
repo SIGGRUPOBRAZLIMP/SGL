@@ -15,7 +15,13 @@ import Filtros from './pages/Filtros'
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth()
-  if (loading) return (
+  const location = useLocation()
+
+  // Se há sso_token na URL, o SSO ainda está processando — não redirecionar para login
+  const params = new URLSearchParams(location.search)
+  const temSsoToken = params.get('sso_token')
+
+  if (loading || temSsoToken) return (
     <div className="flex items-center justify-center h-screen">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
     </div>
@@ -36,12 +42,12 @@ function SSOHandler() {
     if (window._ssoProcessando) return
     window._ssoProcessando = true
 
-    // Timeout de segurança: se travar por mais de 10s, vai para login
+    // Timeout aumentado para 30s — Render pode ter cold start lento
     const _ssoTimeout = setTimeout(() => {
       console.warn('[SSO-SIG] Timeout — redirecionando para login')
       window._ssoProcessando = false
       window.location.replace('/login?sso_erro=timeout')
-    }, 10000)
+    }, 30000)
 
     // Usa o api (axios) que já tem a URL correta do backend (sgl-api-xm64.onrender.com)
     api.post('/auth/sso-sig', { sso_token: ssoToken })
@@ -51,6 +57,7 @@ function SSOHandler() {
         if (data.ok) {
           localStorage.setItem('sgl_token', data.access_token)
           localStorage.setItem('sgl_user',  JSON.stringify(data.user))
+          // Remove sso_token da URL antes de redirecionar
           window.location.replace('/')
         } else {
           console.error('[SSO-SIG] Falha:', data.erro)
@@ -67,11 +74,12 @@ function SSOHandler() {
       })
   }, [])
 
-  // Mostrar loading enquanto processa o SSO
+  // Enquanto o SSO processa, mostrar loading fullscreen e NÃO renderizar as Routes
   const params   = new URLSearchParams(location.search)
   const temToken = params.get('sso_token')
   if (temToken) return (
-    <div className="flex flex-col items-center justify-center h-screen gap-4">
+    <div className="flex flex-col items-center justify-center h-screen gap-4"
+         style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999 }}>
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
       <p className="text-gray-500 text-sm">Autenticando via SIG...</p>
     </div>
