@@ -20,6 +20,7 @@ from threading import Thread
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,16 @@ _fill_formula = PatternFill('solid', fgColor='E2EFDA')
 _fill_marca_v = PatternFill('solid', fgColor='D5E8D4')
 _fill_resumo = PatternFill('solid', fgColor='F2F2F2')
 _fill_prop_auto = PatternFill('solid', fgColor='D6E4F0')
+_fill_disputa = PatternFill('solid', fgColor='8B0000')  # vermelho escuro para disputa
 
 # Fornecedores padrão (editáveis pelo usuário na planilha)
 FORNECEDORES_PADRAO = ['FORNECEDOR 1', 'FORNECEDOR 2', 'FORNECEDOR 3', 'FORNECEDOR 4', 'FORNECEDOR 5']
 FORN_COLORS = ['4472C4', '548235', 'BF8F00', 'C00000', '7030A0']
 CPF = 4  # colunas por fornecedor (Preço, Marca, Cód, Obs)
 SENHA_PROTECAO = 'sgl2026'
+
+# Posição das colunas de disputa (calculada a partir das constantes)
+_DISPUTE_START = 22 + len(FORNECEDORES_PADRAO) * CPF + 4  # após estoque
 
 
 def _fmt_date(dt):
@@ -121,6 +126,8 @@ def _criar_aba_dados_edital(wb, edital_dict):
 
     # Resumo (protegido)
     r = len(campos) + 5
+
+    # --- RESUMO COTAÇÃO ---
     ws.merge_cells(f'A{r}:D{r}')
     ws[f'A{r}'] = 'RESUMO DA COTAÇÃO (automático)'
     ws[f'A{r}'].font = _title_font
@@ -134,6 +141,40 @@ def _criar_aba_dados_edital(wb, edital_dict):
         ('Itens Viáveis', "=COUNTIF('Cotação'!U2:U500,\"VIÁVEL\")"),
         ('Itens Inviáveis', "=COUNTIF('Cotação'!U2:U500,\"INVIÁVEL\")"),
     ], r + 2):
+        cl = ws.cell(row=i, column=1, value=lbl)
+        cl.font = _label_font
+        cl.border = _thin
+        cl.fill = _fill_resumo
+        cl.protection = _LOCKED
+        cv = ws.cell(row=i, column=2, value=f)
+        cv.font = Font(name='Arial', bold=True, size=11)
+        cv.number_format = '#,##0.00'
+        cv.border = _thin
+        cv.fill = _fill_formula
+        cv.protection = _LOCKED
+
+    # --- RESUMO DISPUTA ---
+    sd_col = get_column_letter(_DISPUTE_START)       # STATUS DISPUTA
+    pf_col = get_column_letter(_DISPUTE_START + 1)   # PREÇO FINAL
+    tf_col = get_column_letter(_DISPUTE_START + 2)   # TOTAL FINAL
+
+    rd = r + 9  # posição do bloco disputa
+    ws.merge_cells(f'A{rd}:D{rd}')
+    ws[f'A{rd}'] = 'RESUMO DA DISPUTA (automático)'
+    ws[f'A{rd}'].font = _title_font
+    ws[f'A{rd}'].alignment = Alignment(horizontal='center')
+    ws[f'A{rd}'].protection = _LOCKED
+
+    for i, (lbl, f) in enumerate([
+        ('Itens Vencidos',
+         f"=COUNTIF('Cotação'!{sd_col}2:{sd_col}500,\"VENCIDO\")"),
+        ('Itens Não Vencidos',
+         f"=COUNTIF('Cotação'!{sd_col}2:{sd_col}500,\"NÃO VENCIDO\")"),
+        ('Itens Desertos/Fracassados',
+         f"=COUNTIF('Cotação'!{sd_col}2:{sd_col}500,\"DESERTO\")+COUNTIF('Cotação'!{sd_col}2:{sd_col}500,\"FRACASSADO\")"),
+        ('Valor Total Final (Vencidos)',
+         f"=SUMPRODUCT(('Cotação'!{sd_col}2:{sd_col}500=\"VENCIDO\")*('Cotação'!{tf_col}2:{tf_col}500))"),
+    ], rd + 2):
         cl = ws.cell(row=i, column=1, value=lbl)
         cl.font = _label_font
         cl.border = _thin
@@ -167,7 +208,7 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
 
     # --- CABEÇALHOS FIXOS ---
     hdrs = [
-        (1, 'CONDIÇÃO', 8, _fill_edital, False),
+        (1, 'LOTE/GRUPO', 8, _fill_edital, False),
         (2, 'ITEM', 6, _fill_edital, False),
         (3, 'ESPECIFICAÇÃO', 55, _fill_edital, False),
         (4, 'CATMAT', 10, _fill_edital, False),
@@ -233,7 +274,36 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         c.protection = _LOCKED
         ws.column_dimensions[get_column_letter(col)].width = w
 
-    # --- LETRAS DE REFERÊNCIA ---
+    # --- COLUNAS DE RESULTADO DA DISPUTA ---
+    cd = ce + 4  # coluna start disputa
+    disputa_hdrs = [
+        ('STATUS\nDISPUTA', 13, False),
+        ('PREÇO\nFINAL', 12, False),
+        ('TOTAL\nFINAL', 12, True),
+        ('DESCONTO\n%', 9, True),
+        ('OBS\nDISPUTA', 18, False),
+    ]
+    disputa_formula_cols = set()
+    for di, (lbl, w, is_f) in enumerate(disputa_hdrs):
+        col = cd + di
+        c = ws.cell(row=1, column=col, value=lbl)
+        c.font = _hdr_font
+        c.alignment = _ac
+        c.border = _thin
+        c.fill = _fill_disputa
+        c.protection = _LOCKED
+        ws.column_dimensions[get_column_letter(col)].width = w
+        if is_f:
+            disputa_formula_cols.add(col)
+
+    # Letras das colunas de disputa
+    sd_letter = get_column_letter(cd)      # STATUS DISPUTA
+    pf_letter = get_column_letter(cd + 1)  # PREÇO FINAL
+    tf_letter = get_column_letter(cd + 2)  # TOTAL FINAL
+    dc_letter = get_column_letter(cd + 3)  # DESCONTO %
+    od_letter = get_column_letter(cd + 4)  # OBS DISPUTA
+
+    # --- LETRAS DE REFERÊNCIA DOS FORNECEDORES ---
     fpl, fml, fcl, fol = [], [], [], []
     for fi in range(len(forns)):
         base = cs + fi * CPF
@@ -251,7 +321,6 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
     all_marca = fml + [eml]
     all_cod = fcl + [ecl]
     all_obs = fol + [eol]
-    all_names = forns + ['ESTOQUE']
 
     def _build_nested(parts):
         nested = '""'
@@ -290,25 +359,29 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         # I = preço total máx
         ws.cell(row=row, column=9, value=f'=IF(H{r}<>"",H{r}*F{r},"")').number_format = '#,##0.00'
 
-        # M = menor custo
+        # M = menor custo (FIX: vazio quando nenhum fornecedor preencheu preço)
+        count_p = '+'.join([f'({c}{r}>0)*1' for c in all_price])
         min_p = ','.join([f'IF({c}{r}>0,{c}{r},9999999)' for c in all_price])
-        ws.cell(row=row, column=13, value=f'=IF(B{r}<>"",IFERROR(MIN({min_p}),""),"")').number_format = '#,##0.00'
+        ws.cell(row=row, column=13, value=f'=IF(AND(B{r}<>"",({count_p})>0),MIN({min_p}),"")').number_format = '#,##0.00'
         ws.cell(row=row, column=13).font = _bld_font
 
-        # N = fornecedor vencedor
-        pn = [f'IF({all_price[fi]}{r}=M{r},"{fn}"' for fi, fn in enumerate(all_names)]
+        # N = fornecedor vencedor (FIX: referencia header da coluna ao invés de nome fixo)
+        pn = [
+            f'IF({all_price[fi]}{r}=M{r},LEFT({all_price[fi]}$1,FIND(CHAR(10),{all_price[fi]}$1&CHAR(10))-1)'
+            for fi in range(len(all_price))
+        ]
         ws.cell(row=row, column=14, value=f'=IF(M{r}<>"",{_build_nested(pn)},"")').font = _bld_font
 
         # O = marca vencedora
-        pm = [f'IF({all_price[fi]}{r}=M{r},{all_marca[fi]}{r}' for fi in range(len(all_names))]
+        pm = [f'IF({all_price[fi]}{r}=M{r},{all_marca[fi]}{r}' for fi in range(len(all_price))]
         ws.cell(row=row, column=15, value=f'=IF(M{r}<>"",{_build_nested(pm)},"")').font = _bld_font
 
         # P = cód vencedor
-        pc = [f'IF({all_price[fi]}{r}=M{r},{all_cod[fi]}{r}' for fi in range(len(all_names))]
+        pc = [f'IF({all_price[fi]}{r}=M{r},{all_cod[fi]}{r}' for fi in range(len(all_price))]
         ws.cell(row=row, column=16, value=f'=IF(M{r}<>"",{_build_nested(pc)},"")').font = _bld_font
 
         # Q = obs vencedor
-        po = [f'IF({all_price[fi]}{r}=M{r},{all_obs[fi]}{r}' for fi in range(len(all_names))]
+        po = [f'IF({all_price[fi]}{r}=M{r},{all_obs[fi]}{r}' for fi in range(len(all_price))]
         ws.cell(row=row, column=17, value=f'=IF(M{r}<>"",{_build_nested(po)},"")').font = _bld_font
 
         # J = marca proposta (= marca vencedora)
@@ -317,8 +390,11 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         # L = cód proposta (= cód vencedor)
         ws.cell(row=row, column=12, value=f'=IF(P{r}<>"",P{r},"")').font = _bld_font
 
-        # R = preço venda (custo * 1.3)
-        ws.cell(row=row, column=18, value=f'=IF(M{r}<>"",ROUND(M{r}*1.3,2),"")').number_format = '#,##0.00'
+        # R = preço venda (FIX: margem dinâmica da aba Configuração!$B$3)
+        ws.cell(
+            row=row, column=18,
+            value=f"=IF(M{r}<>\"\",ROUND(M{r}*(1+'Configuração'!$B$3/100),2),\"\")"
+        ).number_format = '#,##0.00'
 
         # S = total venda
         ws.cell(row=row, column=19, value=f'=IF(R{r}<>"",R{r}*F{r},"")').number_format = '#,##0.00'
@@ -329,30 +405,64 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         # U = status
         ws.cell(row=row, column=21, value=f'=IF(R{r}="","",IF(R{r}<=H{r},"VIÁVEL","INVIÁVEL"))')
 
-        # --- FORMATAÇÃO E PROTEÇÃO ---
-        last_col = ce + CPF
-        for col in range(1, last_col):
+        # --- FÓRMULAS DISPUTA ---
+        # TOTAL FINAL = PREÇO FINAL × QTD MÁXIMA
+        ws.cell(
+            row=row, column=cd + 2,
+            value=f'=IF({pf_letter}{r}<>"",{pf_letter}{r}*F{r},"")'
+        ).number_format = '#,##0.00'
+
+        # DESCONTO % = diferença entre preço venda e preço final
+        ws.cell(
+            row=row, column=cd + 3,
+            value=f'=IF(AND({pf_letter}{r}<>"",R{r}<>"",R{r}>0),ROUND((1-{pf_letter}{r}/R{r})*100,1),"")'
+        ).number_format = '0.0'
+
+        # --- FORMATAÇÃO E PROTEÇÃO (colunas fixas 1..U) ---
+        last_col_fmt = cd + len(disputa_hdrs)
+        for col in range(1, last_col_fmt):
             cell = ws.cell(row=row, column=col)
             cell.border = _thin
             cell.font = _dat_font
             cell.alignment = Alignment(vertical='center', wrap_text=(col == 3))
+
+            # Formatos numéricos
             if col in (8, 9, 13, 18, 19):
                 cell.number_format = '#,##0.00'
-            if col >= cs and (col - cs) % CPF == 0:
+            if col >= cs and col < ce and (col - cs) % CPF == 0:
                 cell.number_format = '#,##0.00'
             if col == ce:
                 cell.number_format = '#,##0.00'
+            if col == cd + 1:  # PREÇO FINAL
+                cell.number_format = '#,##0.00'
+            if col == cd + 2:  # TOTAL FINAL
+                cell.number_format = '#,##0.00'
 
-            if col in formula_cols:
+            # Proteção: fórmulas ficam locked, editáveis ficam unlocked
+            if col in formula_cols or col in disputa_formula_cols:
                 cell.protection = _LOCKED
                 cell.fill = _fill_formula
             else:
                 cell.protection = _UNLOCKED
 
+        # Fills especiais
         for c in (15, 16, 17):
             ws.cell(row=row, column=c).fill = _fill_marca_v
         for c in (10, 12):
             ws.cell(row=row, column=c).fill = _fill_prop_auto
+
+    # --- DATA VALIDATION: dropdown STATUS DISPUTA ---
+    dv = DataValidation(
+        type="list",
+        formula1='"VENCIDO,NÃO VENCIDO,DESERTO,FRACASSADO"',
+        allow_blank=True,
+    )
+    dv.error = "Selecione: VENCIDO, NÃO VENCIDO, DESERTO ou FRACASSADO"
+    dv.errorTitle = "Status Inválido"
+    dv.prompt = "Selecione o resultado da disputa"
+    dv.promptTitle = "Status Disputa"
+    ws.add_data_validation(dv)
+    dv.add(f'{sd_letter}2:{sd_letter}{total_rows + 1}')
 
     # --- TOTAIS ---
     rt = total_rows + 2
@@ -366,8 +476,15 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         c.protection = _LOCKED
         c.fill = _fill_formula
 
+    # Total Final (disputa)
+    c = ws.cell(row=rt, column=cd + 2, value=f'=SUM({tf_letter}2:{tf_letter}{rt - 1})')
+    c.number_format = '#,##0.00'
+    c.font = Font(name='Arial', bold=True, size=11)
+    c.protection = _LOCKED
+    c.fill = _fill_formula
+
     ws.freeze_panes = 'D2'
-    last_letter = get_column_letter(ce + CPF - 1)
+    last_letter = get_column_letter(cd + len(disputa_hdrs) - 1)
     ws.auto_filter.ref = f'A1:{last_letter}{rt - 1}'
 
     ws.protection.sheet = True
@@ -429,8 +546,14 @@ def _criar_aba_config(wb):
         '4. Para alterar: Revisão → Desproteger → senha sgl2026',
         '5. Colunas VERDE CLARO = fórmulas protegidas',
         '6. Colunas AZUL CLARO = proposta (auto do vencedor)',
-        '7. Margem padrão 30% — desproteja para alterar',
+        '7. Margem padrão 30% — alterável na célula B3 acima',
         '8. VIÁVEL = preço venda ≤ preço máximo do edital',
+        '',
+        'RESULTADO DA DISPUTA:',
+        '9. Após a sessão, preencha STATUS DISPUTA (dropdown)',
+        '10. Preencha PREÇO FINAL com valor efetivo do lance',
+        '11. TOTAL FINAL e DESCONTO % são calculados automaticamente',
+        '12. Itens VENCIDOS serão usados para gerar planilha reajustada',
     ]
     wc.cell(row=20, column=1, value='INSTRUÇÕES').font = _title_font
     for i, t in enumerate(instrucoes, 22):

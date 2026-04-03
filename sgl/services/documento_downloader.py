@@ -10,11 +10,13 @@ Fluxo:
   3. Extrai texto do PDF (para uso pela IA)
   4. Upload para Dropbox em pasta organizada
   5. Salva referencias na tabela edital_arquivos (com texto_extraido)
+  6. Encadeia: extração AI de itens + geração planilha cotação
 """
 import logging
 import os
 import re
 import time
+import traceback
 from datetime import datetime, timezone
 from threading import Thread
 
@@ -221,7 +223,6 @@ def _baixar_documentos_bbmnet(edital):
             content, ct, fname = _download_file(url)
             if content and len(content) > 1000:
                 nome = fname or f"edital_bbmnet_{edital.id}.pdf"
-
                 texto = ''
                 if nome.lower().endswith('.pdf') or (ct and 'pdf' in ct.lower()):
                     texto = _extrair_texto_pdf(content)
@@ -413,27 +414,32 @@ def baixar_e_enviar_dropbox(edital_id, app=None):
         )
 
         # ========== ENCADEAR: EXTRAÇÃO AI + PLANILHA ==========
-        # Agora que temos o texto extraído, podemos gerar itens via AI
-        # e depois gerar a planilha com os itens preenchidos
+        # FIX: imports corrigidos (from .), app.config ao invés de current_app,
+        #       campo correto (itens_salvos), traceback completo nos logs
         try:
-            from ..services.captacao_service import CaptacaoService
-            from flask import current_app
+            from .captacao_service import CaptacaoService
 
-            service = CaptacaoService(current_app.config)
+            service = CaptacaoService(app.config)
             resultado_ai = service.extrair_itens_edital(edital_id)
 
-            qtd_itens = resultado_ai.get('total_itens', 0)
+            qtd_itens = resultado_ai.get('itens_salvos', 0)
             logger.info("AI extraiu %d itens do edital %d", qtd_itens, edital_id)
         except Exception as e:
-            logger.warning("Erro extrair itens AI edital %d: %s", edital_id, e)
+            logger.error(
+                "Erro extrair itens AI edital %d: %s\n%s",
+                edital_id, e, traceback.format_exc(),
+            )
 
         # Gerar planilha de cotação (agora com itens preenchidos)
         try:
-            from ..services.planilha_cotacao_service import gerar_e_enviar_planilha
+            from .planilha_cotacao_service import gerar_e_enviar_planilha
             gerar_e_enviar_planilha(edital_id, app)
             logger.info("Planilha de cotacao gerada para edital %d", edital_id)
         except Exception as e:
-            logger.warning("Erro gerar planilha edital %d: %s", edital_id, e)
+            logger.error(
+                "Erro gerar planilha edital %d: %s\n%s",
+                edital_id, e, traceback.format_exc(),
+            )
 
 
 def disparar_download_async(edital_id, app):
