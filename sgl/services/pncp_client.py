@@ -2,6 +2,10 @@
 SGL - Cliente da API do PNCP
 Portal Nacional de Contratações Públicas
 Documentação: https://pncp.gov.br/api/consulta/swagger-ui/index.html
+
+NOTA: O PNCP possui DUAS bases de API:
+  - /api/consulta/v1  → busca/pesquisa de contratações (search)
+  - /pncp-api/v1      → acesso a recursos específicos (itens, arquivos, detalhes)
 """
 import logging
 import time
@@ -21,7 +25,11 @@ class PNCPClient:
     API pública, sem necessidade de autenticação.
     """
     
+    # API de busca/pesquisa (contratações por data, propostas abertas, etc.)
     BASE_URL = 'https://pncp.gov.br/api/consulta/v1'
+    
+    # API de recursos específicos (itens, arquivos, detalhes de contratação)
+    RESOURCE_URL = 'https://pncp.gov.br/pncp-api/v1'
     
     # Códigos de modalidade
     MODALIDADES = {
@@ -59,9 +67,18 @@ class PNCPClient:
             'User-Agent': 'SGL/1.0 (Sistema de Gestão de Licitações)'
         })
     
-    def _get(self, endpoint: str, params: dict = None) -> dict:
-        """Faz uma requisição GET à API do PNCP"""
-        url = f"{self.BASE_URL}{endpoint}"
+    def _get(self, endpoint: str, params: dict = None, use_resource_api: bool = False) -> dict:
+        """
+        Faz uma requisição GET à API do PNCP.
+        
+        Args:
+            endpoint: Caminho do endpoint (ex: /contratacoes/publicacao)
+            params: Parâmetros de query string
+            use_resource_api: Se True, usa RESOURCE_URL (pncp-api/v1)
+                              Se False, usa BASE_URL (api/consulta/v1)
+        """
+        base = self.RESOURCE_URL if use_resource_api else self.BASE_URL
+        url = f"{base}{endpoint}"
         try:
             response = self.session.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
@@ -83,7 +100,7 @@ class PNCPClient:
             raise
     
     # =========================================================
-    # CONTRATAÇÕES (Editais/Licitações)
+    # CONTRATAÇÕES (Editais/Licitações) — usa API de busca
     # =========================================================
     
     def buscar_contratacoes_por_data(
@@ -162,10 +179,13 @@ class PNCPClient:
             sequencial: Sequencial da compra
         """
         cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '')
-        return self._get(f'/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}')
+        return self._get(
+            f'/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}',
+            use_resource_api=True,
+        )
     
     # =========================================================
-    # ITENS DE CONTRATAÇÃO
+    # ITENS DE CONTRATAÇÃO — usa API de recursos
     # =========================================================
     
     def buscar_itens_contratacao(
@@ -177,12 +197,18 @@ class PNCPClient:
         """
         Busca todos os itens de uma contratação.
         Retorna lista com descrição, quantidade, preço, etc.
+        
+        Usa RESOURCE_URL (pncp-api/v1) — a API de consulta não suporta
+        este endpoint e retorna 404.
         """
         cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '')
-        return self._get(f'/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}/itens')
+        return self._get(
+            f'/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}/itens',
+            use_resource_api=True,
+        )
     
     # =========================================================
-    # DOCUMENTOS / ARQUIVOS
+    # DOCUMENTOS / ARQUIVOS — usa API de recursos
     # =========================================================
     
     def buscar_arquivos_contratacao(
@@ -196,7 +222,10 @@ class PNCPClient:
         Retorna URLs para download dos arquivos.
         """
         cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '')
-        return self._get(f'/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}/arquivos')
+        return self._get(
+            f'/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}/arquivos',
+            use_resource_api=True,
+        )
     
     def baixar_arquivo(self, cnpj: str, ano: int, sequencial: int, seq_arquivo: int) -> bytes:
         """
@@ -204,7 +233,7 @@ class PNCPClient:
         Retorna os bytes do arquivo (geralmente PDF).
         """
         cnpj_limpo = cnpj.replace('.', '').replace('/', '').replace('-', '')
-        url = f"{self.BASE_URL}/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}/arquivos/{seq_arquivo}"
+        url = f"{self.RESOURCE_URL}/orgaos/{cnpj_limpo}/compras/{ano}/{sequencial}/arquivos/{seq_arquivo}"
         response = self.session.get(url, timeout=60)
         response.raise_for_status()
         return response.content
