@@ -1,15 +1,14 @@
 """
-SGL - Gerador Automático de Planilha de Cotação
+SGL - Gerador Automático de Planilha de Cotação — V1.0
 
-Gera XLSX com dados do edital + itens (AI ou manuais) + fórmulas automáticas.
-Chamado automaticamente ao aprovar edital na triagem.
-
-Fluxo:
-  1. Busca dados do edital no banco
-  2. Busca itens extraídos (AI) ou tenta extrair do texto
-  3. Gera planilha XLSX com fórmulas de cotação
-  4. Upload para Dropbox na pasta do edital
-  5. Salva referência no banco (edital_arquivos)
+Layout revisado com feedback dos vendedores:
+  - STATUS (VIÁVEL/INVIÁVEL) como coluna A
+  - QTD única (removeu QTD MÍNIMA)
+  - CÓD PROPOSTA removido
+  - MÍN VENDA e MÍN TOTAL VENDA antes do Menor Custo
+  - MARGEM % após OBS Vencedor
+  - 15 fornecedores + Estoque + Disputa
+  - Nomes dos fornecedores editáveis (células desbloqueadas)
 """
 import io
 import logging
@@ -49,20 +48,22 @@ _fill_formula = PatternFill('solid', fgColor='E2EFDA')
 _fill_marca_v = PatternFill('solid', fgColor='D5E8D4')
 _fill_resumo = PatternFill('solid', fgColor='F2F2F2')
 _fill_prop_auto = PatternFill('solid', fgColor='D6E4F0')
-_fill_disputa = PatternFill('solid', fgColor='8B0000')  # vermelho escuro para disputa
+_fill_disputa = PatternFill('solid', fgColor='8B0000')
 
-# Fornecedores padrão (editáveis pelo usuário na planilha)
-FORNECEDORES_PADRAO = ['FORNECEDOR 1', 'FORNECEDOR 2', 'FORNECEDOR 3', 'FORNECEDOR 4', 'FORNECEDOR 5']
+# 15 fornecedores genéricos (nomes editáveis na planilha)
+NUM_FORNECEDORES = 15
+FORNECEDORES_PADRAO = [f'FORNECEDOR {i+1}' for i in range(NUM_FORNECEDORES)]
 FORN_COLORS = ['4472C4', '548235', 'BF8F00', 'C00000', '7030A0']
 CPF = 4  # colunas por fornecedor (Preço, Marca, Cód, Obs)
 SENHA_PROTECAO = 'sgl2026'
 
-# Posição das colunas de disputa (calculada a partir das constantes)
-_DISPUTE_START = 22 + len(FORNECEDORES_PADRAO) * CPF + 4  # após estoque
+# Posições calculadas
+CS = 20                           # fornecedores começam na coluna 20 (T)
+CE = CS + NUM_FORNECEDORES * CPF  # estoque começa após fornecedores
+CD = CE + 4                       # disputa começa após estoque
 
 
 def _fmt_date(dt):
-    """Formata datetime para string legível."""
     if not dt:
         return ''
     if isinstance(dt, str):
@@ -71,7 +72,6 @@ def _fmt_date(dt):
 
 
 def _fmt_currency(val):
-    """Formata valor monetário."""
     if not val:
         return ''
     try:
@@ -84,7 +84,6 @@ def _fmt_currency(val):
 # ABA: DADOS DO EDITAL
 # ============================================================
 def _criar_aba_dados_edital(wb, edital_dict):
-    """Cria aba com dados do edital preenchidos."""
     ws = wb.active
     ws.title = "Dados do Edital"
     ws.merge_cells('A1:D1')
@@ -124,10 +123,8 @@ def _criar_aba_dados_edital(wb, edital_dict):
         if lbl == 'Objeto':
             c.alignment = Alignment(wrap_text=True, vertical='top')
 
-    # Resumo (protegido)
-    r = len(campos) + 5
-
     # --- RESUMO COTAÇÃO ---
+    r = len(campos) + 5
     ws.merge_cells(f'A{r}:D{r}')
     ws[f'A{r}'] = 'RESUMO DA COTAÇÃO (automático)'
     ws[f'A{r}'].font = _title_font
@@ -135,11 +132,11 @@ def _criar_aba_dados_edital(wb, edital_dict):
     ws[f'A{r}'].protection = _LOCKED
 
     for i, (lbl, f) in enumerate([
-        ('Total de Itens', "=COUNTA('Cotação'!B2:B500)"),
+        ('Total de Itens', "=COUNTA('Cotação'!C2:C500)"),
         ('Valor Total Máximo (edital)', "=SUM('Cotação'!I2:I500)"),
-        ('Valor Total Proposta (c/ margem)', "=SUM('Cotação'!S2:S500)"),
-        ('Itens Viáveis', "=COUNTIF('Cotação'!U2:U500,\"VIÁVEL\")"),
-        ('Itens Inviáveis', "=COUNTIF('Cotação'!U2:U500,\"INVIÁVEL\")"),
+        ('Valor Total Proposta (c/ margem)', "=SUM('Cotação'!M2:M500)"),
+        ('Itens Viáveis', "=COUNTIF('Cotação'!A2:A500,\"VIÁVEL\")"),
+        ('Itens Inviáveis', "=COUNTIF('Cotação'!A2:A500,\"INVIÁVEL\")"),
     ], r + 2):
         cl = ws.cell(row=i, column=1, value=lbl)
         cl.font = _label_font
@@ -154,11 +151,10 @@ def _criar_aba_dados_edital(wb, edital_dict):
         cv.protection = _LOCKED
 
     # --- RESUMO DISPUTA ---
-    sd_col = get_column_letter(_DISPUTE_START)       # STATUS DISPUTA
-    pf_col = get_column_letter(_DISPUTE_START + 1)   # PREÇO FINAL
-    tf_col = get_column_letter(_DISPUTE_START + 2)   # TOTAL FINAL
+    sd_col = get_column_letter(CD)
+    tf_col = get_column_letter(CD + 2)
 
-    rd = r + 9  # posição do bloco disputa
+    rd = r + 9
     ws.merge_cells(f'A{rd}:D{rd}')
     ws[f'A{rd}'] = 'RESUMO DA DISPUTA (automático)'
     ws[f'A{rd}'].font = _title_font
@@ -194,41 +190,37 @@ def _criar_aba_dados_edital(wb, edital_dict):
     ws.protection.sort = False
     ws.protection.formatColumns = False
     ws.protection.formatRows = False
-
     return ws
 
 
 # ============================================================
-# ABA: COTAÇÃO (principal)
+# ABA: COTAÇÃO (principal) — V1.0
 # ============================================================
 def _criar_aba_cotacao(wb, itens, fornecedores=None):
-    """Cria aba de cotação com itens preenchidos e fórmulas."""
     ws = wb.create_sheet("Cotação")
     forns = fornecedores or FORNECEDORES_PADRAO
 
-    # --- CABEÇALHOS FIXOS ---
+    # === CABEÇALHOS FIXOS (A..S) ===
     hdrs = [
-        (1, 'LOTE/GRUPO', 8, _fill_edital, False),
-        (2, 'ITEM', 6, _fill_edital, False),
-        (3, 'ESPECIFICAÇÃO', 55, _fill_edital, False),
-        (4, 'CATMAT', 10, _fill_edital, False),
-        (5, 'QTD\nMÍNIMA', 8, _fill_edital, False),
-        (6, 'QTD\nMÁXIMA', 8, _fill_edital, False),
-        (7, 'UNID', 7, _fill_edital, False),
-        (8, 'PREÇO UNIT\nMÁXIMO', 12, _fill_edital, False),
-        (9, 'PREÇO TOTAL\nMÁXIMO', 13, _fill_edital, True),
-        (10, 'MARCA\nPROPOSTA', 14, _fill_proposta, True),
-        (11, 'MODELO', 12, _fill_proposta, False),
-        (12, 'CÓD\nPROPOSTA', 10, _fill_proposta, True),
-        (13, 'MENOR\nCUSTO', 11, _fill_calc, True),
-        (14, 'FORN.\nVENCEDOR', 16, _fill_calc, True),
-        (15, 'MARCA\nVENCEDORA', 14, PatternFill('solid', fgColor='375623'), True),
-        (16, 'CÓD\nVENCEDOR', 10, PatternFill('solid', fgColor='375623'), True),
-        (17, 'OBS\nVENCEDOR', 16, PatternFill('solid', fgColor='375623'), True),
-        (18, 'PREÇO\nVENDA', 11, _fill_result, True),
-        (19, 'TOTAL\nVENDA', 12, _fill_result, True),
-        (20, 'MARGEM\n%', 9, _fill_result, True),
-        (21, 'STATUS', 10, _fill_result, True),
+        (1,  'STATUS',              10, _fill_result,   True),
+        (2,  'LOTE/GRUPO',           8, _fill_edital,   False),
+        (3,  'ITEM',                 6, _fill_edital,   False),
+        (4,  'ESPECIFICAÇÃO',       55, _fill_edital,   False),
+        (5,  'CATMAT',              10, _fill_edital,   False),
+        (6,  'QTD',                 10, _fill_edital,   False),
+        (7,  'UNID',                 7, _fill_edital,   False),
+        (8,  'PREÇO UNIT\nMÁXIMO', 12, _fill_edital,   False),
+        (9,  'PREÇO TOTAL\nMÁXIMO', 13, _fill_edital,  True),
+        (10, 'MARCA\nPROPOSTA',    14, _fill_proposta,  True),
+        (11, 'MODELO',              12, _fill_proposta,  False),
+        (12, 'MÍN\nVENDA',         11, _fill_result,    True),
+        (13, 'MÍN TOTAL\nVENDA',   12, _fill_result,    True),
+        (14, 'MENOR\nCUSTO',       11, _fill_calc,      True),
+        (15, 'FORN.\nVENCEDOR',    16, _fill_calc,      True),
+        (16, 'MARCA\nVENCEDORA',   14, PatternFill('solid', fgColor='375623'), True),
+        (17, 'CÓD\nVENCEDOR',     10, PatternFill('solid', fgColor='375623'), True),
+        (18, 'OBS\nVENCEDOR',     16, PatternFill('solid', fgColor='375623'), True),
+        (19, 'MARGEM\n%',           9, _fill_result,    True),
     ]
 
     formula_cols = set()
@@ -243,8 +235,8 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         if is_f:
             formula_cols.add(ci)
 
-    # --- CABEÇALHOS FORNECEDORES ---
-    cs = 22  # coluna start fornecedores
+    # === CABEÇALHOS FORNECEDORES (15 × 4) ===
+    cs = CS
     for fi, fn in enumerate(forns):
         color = FORN_COLORS[fi % len(FORN_COLORS)]
         for di, (lbl, w) in enumerate([
@@ -256,11 +248,11 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
             c.alignment = _ac
             c.border = _thin
             c.fill = PatternFill('solid', fgColor=color)
-            c.protection = _LOCKED
+            c.protection = _UNLOCKED  # editável para renomear fornecedor
             ws.column_dimensions[get_column_letter(col)].width = w
 
-    # --- ESTOQUE ---
-    ce = cs + len(forns) * CPF
+    # === ESTOQUE ===
+    ce = CE
     for di, (lbl, w) in enumerate([
         ('ESTOQUE\nPREÇO', 11), ('ESTOQUE\nMARCA', 10),
         ('ESTOQUE\nCÓDIGO', 10), ('ESTOQUE\nOBS', 14)
@@ -274,8 +266,8 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         c.protection = _LOCKED
         ws.column_dimensions[get_column_letter(col)].width = w
 
-    # --- COLUNAS DE RESULTADO DA DISPUTA ---
-    cd = ce + 4  # coluna start disputa
+    # === DISPUTA ===
+    cd = CD
     disputa_hdrs = [
         ('STATUS\nDISPUTA', 13, False),
         ('PREÇO\nFINAL', 12, False),
@@ -296,14 +288,11 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
         if is_f:
             disputa_formula_cols.add(col)
 
-    # Letras das colunas de disputa
-    sd_letter = get_column_letter(cd)      # STATUS DISPUTA
-    pf_letter = get_column_letter(cd + 1)  # PREÇO FINAL
-    tf_letter = get_column_letter(cd + 2)  # TOTAL FINAL
-    dc_letter = get_column_letter(cd + 3)  # DESCONTO %
-    od_letter = get_column_letter(cd + 4)  # OBS DISPUTA
+    # Letras disputa
+    pf_letter = get_column_letter(cd + 1)
+    tf_letter = get_column_letter(cd + 2)
 
-    # --- LETRAS DE REFERÊNCIA DOS FORNECEDORES ---
+    # === LETRAS REFERÊNCIA FORNECEDORES ===
     fpl, fml, fcl, fol = [], [], [], []
     for fi in range(len(forns)):
         base = cs + fi * CPF
@@ -328,130 +317,119 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
             nested = f'{p},{nested})'
         return nested
 
-    # --- PREENCHER ITENS + FÓRMULAS ---
-    total_rows = max(len(itens) + 5, 50)  # mínimo 50 linhas de fórmula
+    # === PREENCHER ITENS + FÓRMULAS ===
+    total_rows = max(len(itens) + 5, 50)
     total_rows = min(total_rows, 500)
 
     for row in range(2, total_rows + 2):
         r = str(row)
         item_idx = row - 2
 
-        # Preencher dados do item (se existir)
         if item_idx < len(itens):
             item = itens[item_idx]
-            ws.cell(row=row, column=2, value=item.get('numero_item', item_idx + 1))
-            ws.cell(row=row, column=3, value=item.get('descricao', ''))
-            ws.cell(row=row, column=4, value=item.get('codigo_referencia', ''))
-            ws.cell(row=row, column=5, value=item.get('qtd_minima', 1))
-            ws.cell(row=row, column=6, value=item.get('quantidade') or item.get('qtd_maxima', ''))
+            ws.cell(row=row, column=3, value=item.get('numero_item', item_idx + 1))
+            ws.cell(row=row, column=4, value=item.get('descricao', ''))
+            ws.cell(row=row, column=5, value=item.get('codigo_referencia', ''))
+            ws.cell(row=row, column=6, value=item.get('quantidade') or '')
             ws.cell(row=row, column=7, value=item.get('unidade_compra', ''))
-
             preco = item.get('preco_unitario_maximo')
             if preco:
                 try:
                     ws.cell(row=row, column=8, value=float(preco))
                 except (ValueError, TypeError):
                     ws.cell(row=row, column=8, value=preco)
+            ws.cell(row=row, column=2, value=item.get('grupo_lote', ''))
 
-            ws.cell(row=row, column=1, value=item.get('grupo_lote', ''))
+        # A = STATUS
+        ws.cell(row=row, column=1,
+                value=f'=IF(L{r}="","",IF(L{r}<=H{r},"VIÁVEL","INVIÁVEL"))')
 
-        # --- FÓRMULAS ---
-        # I = preço total máx
-        ws.cell(row=row, column=9, value=f'=IF(H{r}<>"",H{r}*F{r},"")').number_format = '#,##0.00'
+        # I = PREÇO TOTAL MÁXIMO
+        ws.cell(row=row, column=9,
+                value=f'=IF(H{r}<>"",H{r}*F{r},"")').number_format = '#,##0.00'
 
-        # M = menor custo (FIX: vazio quando nenhum fornecedor preencheu preço)
+        # N = MENOR CUSTO
         count_p = '+'.join([f'({c}{r}>0)*1' for c in all_price])
         min_p = ','.join([f'IF({c}{r}>0,{c}{r},9999999)' for c in all_price])
-        ws.cell(row=row, column=13, value=f'=IF(AND(B{r}<>"",({count_p})>0),MIN({min_p}),"")').number_format = '#,##0.00'
-        ws.cell(row=row, column=13).font = _bld_font
+        ws.cell(row=row, column=14,
+                value=f'=IF(AND(C{r}<>"",({count_p})>0),MIN({min_p}),"")').number_format = '#,##0.00'
+        ws.cell(row=row, column=14).font = _bld_font
 
-        # N = fornecedor vencedor (FIX: referencia header da coluna ao invés de nome fixo)
+        # L = MÍN VENDA
+        ws.cell(row=row, column=12,
+                value=f"=IF(N{r}<>\"\",ROUND(N{r}*(1+'Configuração'!$B$3/100),2),\"\")").number_format = '#,##0.00'
+
+        # M = MÍN TOTAL VENDA
+        ws.cell(row=row, column=13,
+                value=f'=IF(L{r}<>"",L{r}*F{r},"")').number_format = '#,##0.00'
+
+        # O = FORN. VENCEDOR
         pn = [
-            f'IF({all_price[fi]}{r}=M{r},LEFT({all_price[fi]}$1,FIND(CHAR(10),{all_price[fi]}$1&CHAR(10))-1)'
+            f'IF({all_price[fi]}{r}=N{r},LEFT({all_price[fi]}$1,FIND(CHAR(10),{all_price[fi]}$1&CHAR(10))-1)'
             for fi in range(len(all_price))
         ]
-        ws.cell(row=row, column=14, value=f'=IF(M{r}<>"",{_build_nested(pn)},"")').font = _bld_font
+        ws.cell(row=row, column=15,
+                value=f'=IF(N{r}<>"",{_build_nested(pn)},"")').font = _bld_font
 
-        # O = marca vencedora
-        pm = [f'IF({all_price[fi]}{r}=M{r},{all_marca[fi]}{r}' for fi in range(len(all_price))]
-        ws.cell(row=row, column=15, value=f'=IF(M{r}<>"",{_build_nested(pm)},"")').font = _bld_font
+        # P = MARCA VENCEDORA
+        pm = [f'IF({all_price[fi]}{r}=N{r},{all_marca[fi]}{r}'
+              for fi in range(len(all_price))]
+        ws.cell(row=row, column=16,
+                value=f'=IF(N{r}<>"",{_build_nested(pm)},"")').font = _bld_font
 
-        # P = cód vencedor
-        pc = [f'IF({all_price[fi]}{r}=M{r},{all_cod[fi]}{r}' for fi in range(len(all_price))]
-        ws.cell(row=row, column=16, value=f'=IF(M{r}<>"",{_build_nested(pc)},"")').font = _bld_font
+        # Q = CÓD VENCEDOR
+        pc = [f'IF({all_price[fi]}{r}=N{r},{all_cod[fi]}{r}'
+              for fi in range(len(all_price))]
+        ws.cell(row=row, column=17,
+                value=f'=IF(N{r}<>"",{_build_nested(pc)},"")').font = _bld_font
 
-        # Q = obs vencedor
-        po = [f'IF({all_price[fi]}{r}=M{r},{all_obs[fi]}{r}' for fi in range(len(all_price))]
-        ws.cell(row=row, column=17, value=f'=IF(M{r}<>"",{_build_nested(po)},"")').font = _bld_font
+        # R = OBS VENCEDOR
+        po = [f'IF({all_price[fi]}{r}=N{r},{all_obs[fi]}{r}'
+              for fi in range(len(all_price))]
+        ws.cell(row=row, column=18,
+                value=f'=IF(N{r}<>"",{_build_nested(po)},"")').font = _bld_font
 
-        # J = marca proposta (= marca vencedora)
-        ws.cell(row=row, column=10, value=f'=IF(O{r}<>"",O{r},"")').font = _bld_font
+        # J = MARCA PROPOSTA
+        ws.cell(row=row, column=10,
+                value=f'=IF(P{r}<>"",P{r},"")').font = _bld_font
 
-        # L = cód proposta (= cód vencedor)
-        ws.cell(row=row, column=12, value=f'=IF(P{r}<>"",P{r},"")').font = _bld_font
+        # S = MARGEM %
+        ws.cell(row=row, column=19,
+                value=f'=IF(AND(L{r}<>"",H{r}<>"",L{r}>0),ROUND((H{r}/L{r}-1)*100,1),"")').number_format = '0.0'
 
-        # R = preço venda (FIX: margem dinâmica da aba Configuração!$B$3)
-        ws.cell(
-            row=row, column=18,
-            value=f"=IF(M{r}<>\"\",ROUND(M{r}*(1+'Configuração'!$B$3/100),2),\"\")"
-        ).number_format = '#,##0.00'
+        # DISPUTA: TOTAL FINAL
+        ws.cell(row=row, column=cd + 2,
+                value=f'=IF({pf_letter}{r}<>"",{pf_letter}{r}*F{r},"")').number_format = '#,##0.00'
+        # DISPUTA: DESCONTO %
+        ws.cell(row=row, column=cd + 3,
+                value=f'=IF(AND({pf_letter}{r}<>"",L{r}<>"",L{r}>0),ROUND((1-{pf_letter}{r}/L{r})*100,1),"")').number_format = '0.0'
 
-        # S = total venda
-        ws.cell(row=row, column=19, value=f'=IF(R{r}<>"",R{r}*F{r},"")').number_format = '#,##0.00'
-
-        # T = margem %
-        ws.cell(row=row, column=20, value=f'=IF(AND(R{r}<>"",H{r}<>"",R{r}>0),ROUND((H{r}/R{r}-1)*100,1),"")').number_format = '0.0'
-
-        # U = status
-        ws.cell(row=row, column=21, value=f'=IF(R{r}="","",IF(R{r}<=H{r},"VIÁVEL","INVIÁVEL"))')
-
-        # --- FÓRMULAS DISPUTA ---
-        # TOTAL FINAL = PREÇO FINAL × QTD MÁXIMA
-        ws.cell(
-            row=row, column=cd + 2,
-            value=f'=IF({pf_letter}{r}<>"",{pf_letter}{r}*F{r},"")'
-        ).number_format = '#,##0.00'
-
-        # DESCONTO % = diferença entre preço venda e preço final
-        ws.cell(
-            row=row, column=cd + 3,
-            value=f'=IF(AND({pf_letter}{r}<>"",R{r}<>"",R{r}>0),ROUND((1-{pf_letter}{r}/R{r})*100,1),"")'
-        ).number_format = '0.0'
-
-        # --- FORMATAÇÃO E PROTEÇÃO (colunas fixas 1..U) ---
+        # === FORMATAÇÃO ===
         last_col_fmt = cd + len(disputa_hdrs)
-        for col in range(1, last_col_fmt):
+        for col in range(1, last_col_fmt + 1):
             cell = ws.cell(row=row, column=col)
             cell.border = _thin
             cell.font = _dat_font
-            cell.alignment = Alignment(vertical='center', wrap_text=(col == 3))
-
-            # Formatos numéricos
-            if col in (8, 9, 13, 18, 19):
+            cell.alignment = Alignment(vertical='center', wrap_text=(col == 4))
+            if col in (8, 9, 12, 13, 14):
                 cell.number_format = '#,##0.00'
-            if col >= cs and col < ce and (col - cs) % CPF == 0:
+            if cs <= col < ce and (col - cs) % CPF == 0:
                 cell.number_format = '#,##0.00'
             if col == ce:
                 cell.number_format = '#,##0.00'
-            if col == cd + 1:  # PREÇO FINAL
+            if col in (cd + 1, cd + 2):
                 cell.number_format = '#,##0.00'
-            if col == cd + 2:  # TOTAL FINAL
-                cell.number_format = '#,##0.00'
-
-            # Proteção: fórmulas ficam locked, editáveis ficam unlocked
             if col in formula_cols or col in disputa_formula_cols:
                 cell.protection = _LOCKED
                 cell.fill = _fill_formula
             else:
                 cell.protection = _UNLOCKED
 
-        # Fills especiais
-        for c in (15, 16, 17):
+        for c in (16, 17, 18):
             ws.cell(row=row, column=c).fill = _fill_marca_v
-        for c in (10, 12):
-            ws.cell(row=row, column=c).fill = _fill_prop_auto
+        ws.cell(row=row, column=10).fill = _fill_prop_auto
 
-    # --- DATA VALIDATION: dropdown STATUS DISPUTA ---
+    # === DROPDOWN STATUS DISPUTA ===
     dv = DataValidation(
         type="list",
         formula1='"VENCIDO,NÃO VENCIDO,DESERTO,FRACASSADO"',
@@ -459,31 +437,28 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
     )
     dv.error = "Selecione: VENCIDO, NÃO VENCIDO, DESERTO ou FRACASSADO"
     dv.errorTitle = "Status Inválido"
-    dv.prompt = "Selecione o resultado da disputa"
-    dv.promptTitle = "Status Disputa"
     ws.add_data_validation(dv)
-    dv.add(f'{sd_letter}2:{sd_letter}{total_rows + 1}')
+    dv.add(f'{get_column_letter(cd)}2:{get_column_letter(cd)}{total_rows + 1}')
 
-    # --- TOTAIS ---
+    # === TOTAIS ===
     rt = total_rows + 2
-    ws.cell(row=rt, column=2, value='TOTAL').font = Font(name='Arial', bold=True, size=10)
-    ws.cell(row=rt, column=2).protection = _LOCKED
-    for ci in (9, 19):
+    ws.cell(row=rt, column=3, value='TOTAL').font = Font(name='Arial', bold=True, size=10)
+    ws.cell(row=rt, column=3).protection = _LOCKED
+    for ci in (9, 13):
         L = get_column_letter(ci)
         c = ws.cell(row=rt, column=ci, value=f'=SUM({L}2:{L}{rt - 1})')
         c.number_format = '#,##0.00'
         c.font = Font(name='Arial', bold=True, size=11)
         c.protection = _LOCKED
         c.fill = _fill_formula
-
-    # Total Final (disputa)
-    c = ws.cell(row=rt, column=cd + 2, value=f'=SUM({tf_letter}2:{tf_letter}{rt - 1})')
+    c = ws.cell(row=rt, column=cd + 2,
+                value=f'=SUM({tf_letter}2:{tf_letter}{rt - 1})')
     c.number_format = '#,##0.00'
     c.font = Font(name='Arial', bold=True, size=11)
     c.protection = _LOCKED
     c.fill = _fill_formula
 
-    ws.freeze_panes = 'D2'
+    ws.freeze_panes = 'E2'
     last_letter = get_column_letter(cd + len(disputa_hdrs) - 1)
     ws.auto_filter.ref = f'A1:{last_letter}{rt - 1}'
 
@@ -495,7 +470,6 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
     ws.protection.formatColumns = False
     ws.protection.formatRows = False
     ws.protection.insertRows = False
-
     return ws
 
 
@@ -503,7 +477,6 @@ def _criar_aba_cotacao(wb, itens, fornecedores=None):
 # ABA: CONFIGURAÇÃO
 # ============================================================
 def _criar_aba_config(wb):
-    """Cria aba de configuração com instruções."""
     wc = wb.create_sheet("Configuração")
     wc['A1'] = 'CONFIGURAÇÕES'
     wc['A1'].font = _title_font
@@ -542,23 +515,24 @@ def _criar_aba_config(wb):
     instrucoes = [
         '1. Itens preenchidos automaticamente pela IA',
         '2. Preencha preço, marca, código e OBS de cada fornecedor',
-        '3. MARCA PROPOSTA e CÓD PROPOSTA puxam do vencedor automaticamente',
+        '3. MARCA PROPOSTA puxa do fornecedor vencedor automaticamente',
         '4. Para alterar: Revisão → Desproteger → senha sgl2026',
         '5. Colunas VERDE CLARO = fórmulas protegidas',
         '6. Colunas AZUL CLARO = proposta (auto do vencedor)',
-        '7. Margem padrão 30% — alterável na célula B3 acima',
-        '8. VIÁVEL = preço venda ≤ preço máximo do edital',
+        '7. Margem padrão — alterável na célula B3 acima',
+        '8. VIÁVEL = mín venda ≤ preço máximo do edital',
+        '9. Nomes dos fornecedores são editáveis no cabeçalho',
+        '10. Para ocultar colunas vazias: selecionar → botão direito → Ocultar',
         '',
         'RESULTADO DA DISPUTA:',
-        '9. Após a sessão, preencha STATUS DISPUTA (dropdown)',
-        '10. Preencha PREÇO FINAL com valor efetivo do lance',
-        '11. TOTAL FINAL e DESCONTO % são calculados automaticamente',
-        '12. Itens VENCIDOS serão usados para gerar planilha reajustada',
+        '11. Após a sessão, preencha STATUS DISPUTA (dropdown)',
+        '12. Preencha PREÇO FINAL com valor efetivo do lance',
+        '13. TOTAL FINAL e DESCONTO % são calculados automaticamente',
+        '14. Itens VENCIDOS serão usados para gerar planilha reajustada',
     ]
     wc.cell(row=20, column=1, value='INSTRUÇÕES').font = _title_font
     for i, t in enumerate(instrucoes, 22):
         wc.cell(row=i, column=1, value=t).font = Font(name='Arial', size=9, color='333333')
-
     return wc
 
 
@@ -566,16 +540,6 @@ def _criar_aba_config(wb):
 # FUNÇÃO PRINCIPAL: GERAR PLANILHA
 # ============================================================
 def gerar_planilha_cotacao(edital_id, app=None):
-    """
-    Gera planilha de cotação para um edital.
-
-    Args:
-        edital_id: int ID do edital
-        app: Flask app (para contexto)
-
-    Returns:
-        bytes do XLSX ou None em erro
-    """
     if app is None:
         from flask import current_app
         app = current_app._get_current_object()
@@ -588,10 +552,7 @@ def gerar_planilha_cotacao(edital_id, app=None):
             logger.error("Edital %d não encontrado para gerar planilha", edital_id)
             return None
 
-        # Buscar dados do edital
         edital_dict = edital.to_dict()
-
-        # Buscar itens extraídos
         itens_db = ItemEditalExtraido.query.filter_by(edital_id=edital_id).order_by(
             ItemEditalExtraido.numero_item.asc()
         ).all()
@@ -603,42 +564,29 @@ def gerar_planilha_cotacao(edital_id, app=None):
                 'descricao': item.descricao,
                 'codigo_referencia': item.codigo_referencia,
                 'quantidade': float(item.quantidade) if item.quantidade else None,
-                'qtd_minima': 1,
                 'unidade_compra': item.unidade_compra or 'UN',
                 'preco_unitario_maximo': float(item.preco_unitario_maximo) if item.preco_unitario_maximo else None,
                 'grupo_lote': item.grupo_lote,
             })
 
-        logger.info(
-            "Gerando planilha cotação: edital=%d, %d itens encontrados",
-            edital_id, len(itens),
-        )
+        logger.info("Gerando planilha cotação V1.0: edital=%d, %d itens", edital_id, len(itens))
 
-        # Gerar workbook
         wb = Workbook()
         _criar_aba_dados_edital(wb, edital_dict)
         _criar_aba_cotacao(wb, itens)
         _criar_aba_config(wb)
 
-        # Salvar em buffer
         buffer = io.BytesIO()
         wb.save(buffer)
         buffer.seek(0)
         xlsx_bytes = buffer.getvalue()
 
-        logger.info(
-            "Planilha cotação gerada: edital=%d, %d bytes, %d itens",
-            edital_id, len(xlsx_bytes), len(itens),
-        )
-
+        logger.info("Planilha cotação V1.0 gerada: edital=%d, %d bytes, %d itens",
+                     edital_id, len(xlsx_bytes), len(itens))
         return xlsx_bytes
 
 
 def gerar_e_enviar_planilha(edital_id, app=None):
-    """
-    Gera planilha e envia para o Dropbox.
-    Salva referência em edital_arquivos.
-    """
     if app is None:
         from flask import current_app
         app = current_app._get_current_object()
@@ -652,68 +600,45 @@ def gerar_e_enviar_planilha(edital_id, app=None):
             logger.error("Edital %d não encontrado", edital_id)
             return
 
-        # Gerar planilha
         xlsx_bytes = gerar_planilha_cotacao(edital_id, app)
         if not xlsx_bytes:
             logger.warning("Falha ao gerar planilha para edital %d", edital_id)
             return
 
-        # Nome do arquivo
         orgao_curto = (edital.orgao_razao_social or 'Edital')[:40].replace('/', '-')
         nome_arquivo = f"COTACAO_{edital.id}_{orgao_curto}.xlsx"
 
-        # Upload para Dropbox
         try:
             pasta = dropbox_service.gerar_pasta_edital(edital)
             dropbox_service.criar_pasta(pasta)
             resultado = dropbox_service.upload_arquivo(
-                xlsx_bytes,
-                f"{pasta}/{nome_arquivo}",
-                nome_arquivo=nome_arquivo,
-            )
+                xlsx_bytes, f"{pasta}/{nome_arquivo}", nome_arquivo=nome_arquivo)
 
             if resultado:
-                # Salvar referência no banco
                 existente = EditalArquivo.query.filter_by(
-                    edital_id=edital.id,
-                    tipo='cotacao',
-                ).first()
-
+                    edital_id=edital.id, tipo='cotacao').first()
                 if existente:
                     existente.url_cloudinary = resultado.get('shared_link') or resultado['dropbox_path']
                     existente.nome_arquivo = nome_arquivo
                     existente.tamanho_bytes = resultado['tamanho']
                 else:
                     arquivo = EditalArquivo(
-                        edital_id=edital.id,
-                        tipo='cotacao',
-                        nome_arquivo=nome_arquivo,
+                        edital_id=edital.id, tipo='cotacao', nome_arquivo=nome_arquivo,
                         url_cloudinary=resultado.get('shared_link') or resultado['dropbox_path'],
                         tamanho_bytes=resultado['tamanho'],
-                        mime_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    )
+                        mime_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                     db.session.add(arquivo)
-
                 db.session.commit()
-                logger.info(
-                    "Planilha cotação enviada ao Dropbox: edital=%d, %s",
-                    edital_id, nome_arquivo,
-                )
+                logger.info("Planilha cotação V1.0 enviada: edital=%d, %s", edital_id, nome_arquivo)
             else:
-                logger.warning("Falha no upload Dropbox da planilha edital %d", edital_id)
-
+                logger.warning("Falha upload Dropbox planilha edital %d", edital_id)
         except Exception as e:
             db.session.rollback()
             logger.error("Erro enviar planilha Dropbox edital %d: %s", edital_id, e)
 
 
 def disparar_geracao_planilha_async(edital_id, app):
-    """Dispara geração de planilha em background."""
-    thread = Thread(
-        target=gerar_e_enviar_planilha,
-        args=(edital_id, app),
-        daemon=True,
-    )
+    thread = Thread(target=gerar_e_enviar_planilha, args=(edital_id, app), daemon=True)
     thread.start()
-    logger.info("Geração de planilha assíncrona disparada para edital %d", edital_id)
+    logger.info("Geração planilha V1.0 assíncrona disparada para edital %d", edital_id)
     return thread
