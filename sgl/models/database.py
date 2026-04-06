@@ -188,6 +188,7 @@ class Edital(db.Model):
             'modalidade_nome': self.modalidade_nome,
             'srp': self.srp,
             'data_publicacao': self.data_publicacao.isoformat() if self.data_publicacao else None,
+            'data_abertura_proposta': self.data_abertura_proposta.isoformat() if self.data_abertura_proposta else None,
             'data_certame': self.data_certame.isoformat() if self.data_certame else None,
             'data_encerramento_proposta': self.data_encerramento_proposta.isoformat() if self.data_encerramento_proposta else None,
             'valor_estimado': float(self.valor_estimado) if self.valor_estimado else None,
@@ -208,7 +209,7 @@ class EditalArquivo(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     edital_id = db.Column(db.Integer, db.ForeignKey('editais.id'), nullable=False)
-    tipo = db.Column(db.String(50), default='edital')  # edital, anexo, ata, contrato, outro
+    tipo = db.Column(db.String(50), default='edital')  # edital, anexo, ata, contrato, cotacao, reajustada
     nome_arquivo = db.Column(db.String(300))
     url_cloudinary = db.Column(db.Text)
     url_original = db.Column(db.Text)
@@ -244,7 +245,16 @@ class ItemEditalExtraido(db.Model):
     grupo_lote = db.Column(db.String(50))
     confianca_extracao = db.Column(db.Float)  # 0.0 a 1.0 — confiança da AI na extração
     revisado = db.Column(db.Boolean, default=False)
-    metodo_extracao = db.Column(db.String(30))  # claude_api, ocr, pdf_parser, manual
+    metodo_extracao = db.Column(db.String(30))  # claude_api, ocr, pdf_parser, manual, pncp_api
+    
+    # === RESULTADO DA DISPUTA ===
+    status_disputa = db.Column(db.String(20))
+    # NULL=não disputado, VENCIDO, NAO_VENCIDO, DESERTO, FRACASSADO
+    preco_final = db.Column(db.Numeric(15, 4))       # preço unitário efetivo na disputa
+    preco_total_final = db.Column(db.Numeric(15, 2))  # preco_final × quantidade
+    obs_disputa = db.Column(db.Text)
+    data_disputa = db.Column(db.DateTime)             # data do registro do resultado
+    
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     
     def to_dict(self):
@@ -261,6 +271,11 @@ class ItemEditalExtraido(db.Model):
             'confianca_extracao': self.confianca_extracao,
             'revisado': self.revisado,
             'metodo_extracao': self.metodo_extracao,
+            'status_disputa': self.status_disputa,
+            'preco_final': float(self.preco_final) if self.preco_final else None,
+            'preco_total_final': float(self.preco_total_final) if self.preco_total_final else None,
+            'obs_disputa': self.obs_disputa,
+            'data_disputa': self.data_disputa.isoformat() if self.data_disputa else None,
         }
 
 
